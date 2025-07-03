@@ -13,7 +13,7 @@
 
 ## 📦 插件列表
 
-### 1. ![multitrackereditor](https://raw.githubusercontent.com/leo8912/mp-plugins/main/icons/multitrackereditor.png)  multitrackereditor
+### 1. multitrackereditor
 
 > 🧩 **本插件灵感源自 [honue/MoviePilot-Plugins](https://github.com/honue/MoviePilot-Plugins) 的 tracker 替换插件，并在此基础上进行了功能增强：**
 
