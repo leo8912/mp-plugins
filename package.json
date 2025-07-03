@@ -4,7 +4,7 @@
     "description": "批量替换多下载器的tracker，支持周期性巡检",
     "version": "1.0",
     "v2": true,
-    "icon": "icons/multitrackereditor.png",
+    "icon": "multitrackereditor.png",
     "author": "leo",
     "homepage": "https://github.com/leo8912",
     "level": 1,
