@@ -13,7 +13,7 @@ from app.schemas import NotificationType
 from app.helper.downloader import DownloaderHelper
 
 
-class Multitrackereditor(_PluginBase):
+class multitrackereditor(_PluginBase):
     # 常量定义
     QBITTORRENT = "qbittorrent"
     TRANSMISSION = "transmission"
