@@ -23,10 +23,6 @@
   - 支持同时选择多个下载器（如 qBittorrent、Transmission 等）进行 tracker 批量替换，参考了 [jxxghp/MoviePilot-Plugins](https://github.com/jxxghp/MoviePilot-Plugins) 官方仓库的 iyuu 插件设计思路，适合多下载器环境下的统一管理和操作。
 
 
-
-- **版本**：1.0
-- **作者**：leo
-
 ---
 
 ## 📚 参考与致谢
