@@ -1,5 +1,5 @@
 {
-  "MultiTrackerEditor": {
+  "multitrackereditor": {
     "name": "多下载器tracker替换",
     "description": "批量替换多下载器的tracker，支持周期性巡检",
     "version": "1.0",
