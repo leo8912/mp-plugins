@@ -1,14 +1,15 @@
 {
-  "name": "multitrackereditor",
-  "title": "MultitrackerEditor",
-  "version": "1.0",
-  "v2": true,
-  "author": "leo",
-  "homepage": "https://github.com/leo8912",
-  "desc": "批量替换多下载器的tracker，支持周期性巡检",
-  "icon": "multitrackereditor.png",
-  "level": 1,
-  "history": {
-    "v1.0": "插件更名为多下载器编辑器，支持多下载器tracker批量替换，版本号重置为1.0"
+  "MultiTrackerEditor": {
+    "name": "多下载器tracker替换",
+    "description": "批量替换多下载器的tracker，支持周期性巡检",
+    "version": "1.0",
+    "v2": true,
+    "icon": "icons/multitrackereditor.png",
+    "author": "leo",
+    "homepage": "https://github.com/leo8912",
+    "level": 1,
+    "history": {
+      "v1.0": "插件更名为多下载器编辑器，支持多下载器tracker批量替换，版本号重置为1.0"
+    }
   }
 } 
