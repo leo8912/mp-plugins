@@ -22,7 +22,7 @@ class multitrackereditor(_PluginBase):
     plugin_name = "多下载器tracker替换"
     plugin_desc = "批量替换多下载器的tracker，支持周期性巡检"
     plugin_icon = "multitrackereditor.png"
-    plugin_version = "1.4"
+    plugin_version = "1.5"
     plugin_author = "Leo"
     author_url = "https://github.com/leo8912"
     plugin_config_prefix = "multitrackereditor_"
@@ -32,7 +32,7 @@ class multitrackereditor(_PluginBase):
     def __init__(self):
         super().__init__()
         self._enabled = False
-        self._notify = 0  # 0: 每次通知, 1: 仅有替换时通知, 2: 不通知
+        self._notify = 1  # 默认仅有替换任务时通知
         self._onlyonce = False
         self._run_con_enable = False
         self._run_con = ""
@@ -42,7 +42,7 @@ class multitrackereditor(_PluginBase):
     def init_plugin(self, config: Optional[dict] = None):
         if config:
             self._enabled = config.get("enabled", False)
-            self._notify = config.get("notify", 0)
+            self._notify = config.get("notify", 1)
             self._onlyonce = config.get("onlyonce", False)
             self._run_con_enable = config.get("run_con_enable", False)
             self._run_con = config.get("run_con", "")
@@ -196,7 +196,7 @@ class multitrackereditor(_PluginBase):
             }
         ], {
             "enabled": self._enabled,
-            "notify": self._notify,
+            "notify": self._notify if self._notify is not None else 1,
             "onlyonce": False,
             "run_con_enable": self._run_con_enable,
             "run_con": self._run_con,
