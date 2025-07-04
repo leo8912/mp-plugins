@@ -2,13 +2,14 @@
   "multitrackereditor": {
     "name": "多下载器tracker替换",
     "description": "批量替换多下载器的tracker，支持周期性巡检",
-    "version": "1.2",
+    "version": "1.3",
     "v2": true,
-    "icon": "https://raw.githubusercontent.com/leo8912/mp-plugins/main/icons/multitrackereditor.png",
+    "icon": "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/Aospace_A.png",
     "author": "leo",
     "homepage": "https://github.com/leo8912",
     "level": 1,
     "history": {
+      "v1.3": "修正通知下拉框为官方兼容格式，彻底解决[object Object]问题，测试官方图标兼容性。",
       "v1.2": "修复通知下拉框显示为[object Object]的问题，完善官方插件市场兼容性。",
       "v1.1": "推送消息支持按下载器统计及显示需修改种子数，通知选项支持三种模式（每次通知/仅有替换时通知/不通知），配置界面优化。",
       "v1.0": "插件更名为多下载器编辑器，支持多下载器tracker批量替换，版本号重置为1.0"

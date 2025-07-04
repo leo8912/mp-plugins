@@ -94,13 +94,11 @@ class multitrackereditor(_PluginBase):
                                             'model': 'notify',
                                             'label': '发送通知',
                                             'items': [
-                                                {'text': '每次运行都通知', 'value': 0},
-                                                {'text': '仅有替换任务时通知', 'value': 1},
-                                                {'text': '不通知', 'value': 2}
+                                                {'label': '每次运行都通知', 'value': 0},
+                                                {'label': '仅有替换任务时通知', 'value': 1},
+                                                {'label': '不通知', 'value': 2}
                                             ],
-                                            'placeholder': '请选择通知模式',
-                                            'item-text': 'text',
-                                            'item-value': 'value'
+                                            'placeholder': '请选择通知模式'
                                         }
                                     }
                                 ]
