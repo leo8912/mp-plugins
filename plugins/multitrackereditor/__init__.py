@@ -22,7 +22,7 @@ class multitrackereditor(_PluginBase):
     plugin_name = "多下载器tracker替换"
     plugin_desc = "批量替换多下载器的tracker，支持周期性巡检"
     plugin_icon = "multitrackereditor.png"
-    plugin_version = "1.0"
+    plugin_version = "1.1"
     plugin_author = "Leo"
     author_url = "https://github.com/leo8912"
     plugin_config_prefix = "multitrackereditor_"
@@ -32,7 +32,7 @@ class multitrackereditor(_PluginBase):
     def __init__(self):
         super().__init__()
         self._enabled = False
-        self._notify = False
+        self._notify = 0  # 0: 每次通知, 1: 仅有替换时通知, 2: 不通知
         self._onlyonce = False
         self._run_con_enable = False
         self._run_con = ""
@@ -42,7 +42,7 @@ class multitrackereditor(_PluginBase):
     def init_plugin(self, config: Optional[dict] = None):
         if config:
             self._enabled = config.get("enabled", False)
-            self._notify = config.get("notify", False)
+            self._notify = config.get("notify", 0)
             self._onlyonce = config.get("onlyonce", False)
             self._run_con_enable = config.get("run_con_enable", False)
             self._run_con = config.get("run_con", "")
@@ -89,10 +89,16 @@ class multitrackereditor(_PluginBase):
                                 'props': {'cols': 12, 'md': 4},
                                 'content': [
                                     {
-                                        'component': 'VSwitch',
+                                        'component': 'VSelect',
                                         'props': {
                                             'model': 'notify',
                                             'label': '发送通知',
+                                            'items': [
+                                                {'text': '每次运行都通知', 'value': 0},
+                                                {'text': '仅有替换任务时通知', 'value': 1},
+                                                {'text': '不通知', 'value': 2}
+                                            ],
+                                            'placeholder': '请选择通知模式'
                                         }
                                     }
                                 ]
@@ -235,10 +241,13 @@ class multitrackereditor(_PluginBase):
         total_torrents = 0
         updated_torrents = 0
         failed_torrents = 0
+        per_downloader_stats = {}
 
         for service_name, service_info in services.items():
             torrents, _ = service_info.instance.get_torrents()
+            per_downloader_stats[service_name] = {'total': 0, 'updated': 0, 'failed': 0}
             for torrent in torrents:
+                per_downloader_stats[service_name]['total'] += 1
                 total_torrents += 1
                 current_trackers = self._get_torrent_trackers(torrent, service_info.type)
                 updated_trackers = self._check_and_replace_trackers(current_trackers, tracker_rules)
@@ -252,16 +261,26 @@ class multitrackereditor(_PluginBase):
                     logger.info(f'➡️ 替换后tracker: {updated_trackers[0] if updated_trackers else "无"}')
                     success = self._update_torrent_trackers(service_info.instance, torrent, torrent_hash, updated_trackers, service_info.type)
                     if success:
+                        per_downloader_stats[service_name]['updated'] += 1
                         updated_torrents += 1
                         logger.info('✅ 替换成功')
                     else:
+                        per_downloader_stats[service_name]['failed'] += 1
                         failed_torrents += 1
                         logger.warning('❌ 替换失败')
                     logger.info('-------------------------------')
 
-        if self._notify:
-            message = f"🎯 Tracker替换任务完成\n📦 总种子数：{total_torrents}\n✅ 成功替换：{updated_torrents}\n❌ 失败：{failed_torrents}"
-            self.send_site_message("Tracker替换任务完成 🚀", message)
+        # 统计需修改的种子数
+        need_update = updated_torrents + failed_torrents
+        # 通知逻辑
+        notify_mode = self._notify
+        has_update = need_update > 0
+        if notify_mode == 0 or (notify_mode == 1 and has_update):
+            msg_lines = ["🎯 Tracker替换任务完成"]
+            for d, stat in per_downloader_stats.items():
+                msg_lines.append(f"📦 {d}：总种子数 {stat['total']}，需修改 {stat['updated']+stat['failed']}，成功 {stat['updated']}，失败 {stat['failed']}")
+            msg_lines.append(f"🔢 总计：{total_torrents}，需修改 {need_update}，成功 {updated_torrents}，失败 {failed_torrents}")
+            self.send_site_message("Tracker替换任务完成 🚀", "\n".join(msg_lines))
         logger.info(f"Tracker替换任务完成，总种子数：{total_torrents}，成功替换：{updated_torrents}，失败：{failed_torrents}")
 
     @staticmethod
