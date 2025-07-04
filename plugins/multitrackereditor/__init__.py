@@ -22,7 +22,7 @@ class multitrackereditor(_PluginBase):
     plugin_name = "多下载器tracker替换"
     plugin_desc = "批量替换多下载器的tracker，支持周期性巡检"
     plugin_icon = "multitrackereditor.png"
-    plugin_version = "1.2"
+    plugin_version = "1.4"
     plugin_author = "Leo"
     author_url = "https://github.com/leo8912"
     plugin_config_prefix = "multitrackereditor_"
@@ -94,9 +94,9 @@ class multitrackereditor(_PluginBase):
                                             'model': 'notify',
                                             'label': '发送通知',
                                             'items': [
-                                                {'label': '每次运行都通知', 'value': 0},
-                                                {'label': '仅有替换任务时通知', 'value': 1},
-                                                {'label': '不通知', 'value': 2}
+                                                {'title': '每次运行都通知', 'value': 0},
+                                                {'title': '仅有替换任务时通知', 'value': 1},
+                                                {'title': '不通知', 'value': 2}
                                             ],
                                             'placeholder': '请选择通知模式'
                                         }
