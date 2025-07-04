@@ -23,7 +23,7 @@ class multitrackereditor(_PluginBase):
     plugin_desc = "批量替换多下载器的tracker，支持周期性巡检"
     plugin_icon = "multitrackereditor_v2.png"
     plugin_version = "1.6"
-    plugin_author = "Leo"
+    plugin_author = "leo"
     author_url = "https://github.com/leo8912"
     plugin_config_prefix = "multitrackereditor_"
     plugin_order = 30
