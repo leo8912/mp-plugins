@@ -21,8 +21,8 @@ class multitrackereditor(_PluginBase):
     # 插件元信息
     plugin_name = "多下载器tracker替换"
     plugin_desc = "批量替换多下载器的tracker，支持周期性巡检"
-    plugin_icon = "multitrackereditor.png"
-    plugin_version = "1.7"
+    plugin_icon = "https://raw.githubusercontent.com/leo8912/mp-plugins/main/icons/multitrackereditor.png"
+    plugin_version = "1.8"
     plugin_author = "leo"
     author_url = "https://github.com/leo8912"
     plugin_config_prefix = "multitrackereditor_"
@@ -419,6 +419,7 @@ class multitrackereditor(_PluginBase):
         return updated_trackers
 
     def _update_torrent_trackers(self, downloader, torrent, torrent_hash: str, new_trackers: List[str], dl_type: str) -> bool:
+        import time
         try:
             if dl_type == self.QBITTORRENT:
                 try:
@@ -432,21 +433,28 @@ class multitrackereditor(_PluginBase):
                             try:
                                 logger.info(f"qBittorrent 替换tracker: {old_tracker} -> {new_tracker}")
                                 result = torrent_obj.edit_tracker(orig_url=old_tracker, new_url=new_tracker)
-                                torrents_after, _ = downloader.get_torrents()
-                                updated_torrent_obj = None
-                                for t in torrents_after:
-                                    if t.get("hash") == torrent_hash:
-                                        updated_torrent_obj = t
-                                        break
-                                if updated_torrent_obj:
-                                    updated_tracker_list = self._get_torrent_trackers(updated_torrent_obj, dl_type)
-                                    if new_tracker in updated_tracker_list and old_tracker not in updated_tracker_list:
-                                        logger.info(f"tracker替换最终验证成功: {old_tracker} -> {new_tracker}")
-                                        success_count += 1
+                                # 增加重试和延迟机制，最多重试3次，每次间隔1秒
+                                for retry in range(3):
+                                    time.sleep(1)
+                                    torrents_after, _ = downloader.get_torrents()
+                                    updated_torrent_obj = None
+                                    for t in torrents_after:
+                                        if t.get("hash") == torrent_hash:
+                                            updated_torrent_obj = t
+                                            break
+                                    if updated_torrent_obj:
+                                        updated_tracker_list = self._get_torrent_trackers(updated_torrent_obj, dl_type)
+                                        # 只要新tracker文本出现在tracker列表中即判定为成功
+                                        if any(new_tracker in tracker for tracker in updated_tracker_list):
+                                            logger.info(f"tracker替换最终验证成功: {old_tracker} -> {new_tracker}")
+                                            success_count += 1
+                                            break
+                                        else:
+                                            logger.warning(f"tracker替换最终验证失败: {old_tracker} -> {new_tracker}，当前tracker列表: {updated_tracker_list}，重试{retry+1}")
                                     else:
-                                        logger.warning(f"tracker替换最终验证失败: {old_tracker} -> {new_tracker}，当前tracker列表: {updated_tracker_list}")
+                                        logger.warning(f"未能重新获取到hash={torrent_hash}的最新种子对象，无法验证，重试{retry+1}")
                                 else:
-                                    logger.warning(f"未能重新获取到hash={torrent_hash}的最新种子对象，无法验证")
+                                    logger.warning(f"tracker替换最终验证失败: {old_tracker} -> {new_tracker}，重试已达上限")
                             except Exception as e:
                                 logger.error(f"qBittorrent edit_tracker异常: {old_tracker} -> {new_tracker}, 错误: {e}")
                     logger.info(f"qBittorrent 总共需要替换{total_replace_count}个tracker，调用成功{success_count}个")

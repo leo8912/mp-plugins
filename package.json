@@ -2,13 +2,14 @@
   "multitrackereditor": {
     "name": "多下载器tracker替换",
     "description": "批量替换多下载器的tracker，支持周期性巡检",
-    "version": "1.7",
+    "version": "1.8",
     "v2": true,
-    "icon": "multitrackereditor.png",
+    "icon": "https://raw.githubusercontent.com/leo8912/mp-plugins/main/icons/multitrackereditor.png",
     "author": "leo",
     "homepage": "https://github.com/leo8912",
     "level": 1,
     "history": {
+      "v1.8": "优化qBittorrent tracker替换校验逻辑，增加重试与延迟机制，提升成功率。",
       "v1.7": "logo文件名与插件名完全一致，彻底解决插件识别和图标显示问题。",
       "v1.6": "更换logo文件名为multitrackereditor_v2.png，彻底解决浏览器缓存导致的图标不刷新问题。",
       "v1.5": "默认通知选项改为'仅有替换任务时通知'，优化用户体验。",
