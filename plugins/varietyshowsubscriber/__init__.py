@@ -15,7 +15,7 @@ from app.db.subscribe_oper import SubscribeOper
 from sqlalchemy.orm import Session
 
 
-class ShowSubscriber(_PluginBase):
+class varietyshowsubscriber(_PluginBase):
     # 插件名称
     plugin_name = "综艺订阅助手"
     # 插件描述
@@ -23,7 +23,7 @@ class ShowSubscriber(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/leo8912/mp-plugins/main/icons/showsubscriber.png"
     # 插件版本
-    plugin_version = "2.19"
+    plugin_version = "2.20"
     # 插件作者
     plugin_author = "leo"
     # 作者主页

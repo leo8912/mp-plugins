@@ -1,5 +1,5 @@
 # Simple PowerShell script to compress MoviePilot plugins
-$PluginName = "ShowSubscriber"
+$PluginName = "varietyshowsubscriber"
 $PluginPath = ".\plugins\$PluginName"
 
 # Check if plugin directory exists

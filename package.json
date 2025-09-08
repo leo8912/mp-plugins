@@ -20,16 +20,17 @@
       "v1.0": "插件更名为多下载器编辑器，支持多下载器tracker批量替换，版本号重置为1.0"
     }
   },
-  "showsubscriber": {
+  "varietyshowsubscriber": {
     "name": "综艺订阅助手",
     "description": "自动为新添加的综艺订阅添加指定站点",
-    "version": "2.19",
+    "version": "2.20",
     "v2": true,
     "icon": "https://raw.githubusercontent.com/leo8912/mp-plugins/main/icons/showsubscriber.png",
     "author": "leo8912",
     "homepage": "https://github.com/leo8912",
     "level": 1,
     "history": {
+      "v2.20": "更新插件版本号，将插件类名改为小写",
       "v2.19": "添加更多调试日志以排查日志无法输出问题",
       "v2.18": "修复插件文件中的缩进错误",
       "v2.17": "回滚到能正常输出日志的版本，添加防重复处理机制",
