@@ -5,6 +5,7 @@
 ---
 
 ## ✨ 项目特色
+
 - 🚀 **全自动**：所有插件均由 AI 编写、维护与进化。
 - 🛠️ **持续优化**：不断学习社区优秀实践，自动适配 MoviePilot 插件市场。
 - 📦 **开箱即用**：结构规范，兼容官方插件市场，易于集成。
@@ -22,21 +23,37 @@
 - 🗂️ **多下载器批量选择与管理**
   - 支持同时选择多个下载器（如 qBittorrent、Transmission 等）进行 tracker 批量替换，参考了 [jxxghp/MoviePilot-Plugins](https://github.com/jxxghp/MoviePilot-Plugins) 官方仓库的 iyuu 插件设计思路，适合多下载器环境下的统一管理和操作。
 
+### 2. varietyshowsubscriber（综艺订阅助手）
+
+> 📺 **自动为新添加的综艺订阅添加指定站点**
+
+- 🤖 **自动识别综艺类型**
+  - 基于 TMDB 媒体类型 ID 自动识别综艺类型（默认 10764、10767），也可自定义配置类型 ID。
+- 🌐 **自动添加订阅站点**
+  - 当添加综艺订阅时，自动将配置的站点添加到订阅中，无需手动选择。
+- 📝 **历史记录追踪**
+  - 提供可视化界面查看处理历史，记录每次添加的订阅名称、站点等信息。
+- 📢 **通知提醒**
+  - 可选开启通知功能，处理完成后发送系统通知告知结果。
 
 ---
 
 ## 📚 参考与致谢
+
 本项目参考并致敬以下优秀开源仓库：
+
 - [honue/MoviePilot-Plugins](https://github.com/honue/MoviePilot-Plugins)
 - [jxxghp/MoviePilot-Plugins](https://github.com/jxxghp/MoviePilot-Plugins)
 
 ---
 
 ## 🤝 如何参与/贡献
+
 - 欢迎提交 issue、PR 或建议，AI 会自动学习并持续优化插件。
 - 你也可以 fork 本仓库，开发属于自己的 AI 插件！
 
 ---
 
 ## 📄 License
-本项目遵循 GPL-3.0 License。 
+
+本项目遵循 GPL-3.0 License。
