@@ -56,4 +56,38 @@
 
 ## 📄 License
 
-本项目遵循 GPL-3.0 License。
+本项目遵循 GPL-3.0 License.
+
+# MoviePilot Plugins Development Environment
+
+This repository contains the development environment for MoviePilot plugins.
+
+## Structure
+
+- `origin/MoviePilot` - Clone of the official MoviePilot repository
+- `origin/MoviePilot-Plugins` - Clone of the official MoviePilot-Plugins repository
+- `plugins` - Custom plugins being developed
+
+## Automatic Upstream Sync
+
+A scheduled task has been set up to automatically sync with upstream repositories daily at 3 AM.
+
+### Manual Sync
+
+To manually sync with upstream repositories, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File sync_upstream.ps1
+```
+
+### Reschedule Sync Task
+
+To change the sync schedule, modify and run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File schedule_sync.ps1
+```
+
+## Development
+
+Custom plugins are developed in the `plugins` directory and can be tested with the MoviePilot instance.
