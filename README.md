@@ -91,3 +91,10 @@ powershell -ExecutionPolicy Bypass -File schedule_sync.ps1
 ## Development
 
 Custom plugins are developed in the `plugins` directory and can be tested with the MoviePilot instance.
+
+## Git Ignore
+
+The `origin` directory containing the upstream repositories is excluded from Git tracking through the `.gitignore` file. This ensures that:
+1. Upstream repository contents are not pushed to your personal repository
+2. Your local changes and commits remain clean and focused on your custom plugins
+3. You can still sync with upstream repositories without conflicts
