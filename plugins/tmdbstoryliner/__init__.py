@@ -941,9 +941,18 @@ class TmdbStoryliner(_PluginBase):
                             if season_number == 0:
                                 continue
                             
-                            # 遍历每集
-                            episode_count = season.get('episode_count', 0)
-                            for episode_number in range(1, episode_count + 1):
+                            # 获取媒体服务器中的剧集信息
+                            episodes = mediaserver_chain.episodes(server_name, series.itemid)
+                            
+                            # 遍历媒体服务器中的剧集
+                            for episode in episodes:
+                                season_number = episode.season
+                                episode_number = episode.episode
+                                
+                                # 跳过特殊季（如预告片等）
+                                if season_number == 0:
+                                    continue
+                                
                                 # 获取剧集详细信息（带重试机制）
                                 episode_details = None
                                 for i in range(3):  # 最多重试3次
@@ -974,12 +983,12 @@ class TmdbStoryliner(_PluginBase):
                                 
                                 # 4. 更新媒体库
                                 # 获取剧集详情
-                                iteminfo = self.get_iteminfo(server_name, server_info.type, series.itemid)
+                                iteminfo = self.get_iteminfo(server_name, server_info.type, episode.item_id)
                                 if iteminfo:
                                     # 更新剧集剧情简介
                                     iteminfo['Overview'] = translated_overview
                                     # 保存更新
-                                    if self.set_iteminfo(server_name, server_info.type, series.itemid, iteminfo):
+                                    if self.set_iteminfo(server_name, server_info.type, episode.item_id, iteminfo):
                                         logger.info(f"已更新 {series.title} S{season_number:02d}E{episode_number:02d} 剧情简介")
                                     else:
                                         logger.error(f"更新 {series.title} S{season_number:02d}E{episode_number:02d} 剧情简介失败")
