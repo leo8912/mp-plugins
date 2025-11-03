@@ -1,7 +1,7 @@
-{
+﻿{
   "multitrackereditor": {
     "name": "多下载器tracker替换",
-    "description": "批量替换多下载器的tracker，支持周期性巡检",
+    "description": "批量替换多下载器的tracker，支持周期性检测",
     "version": "1.8",
     "v2": true,
     "icon": "https://raw.githubusercontent.com/leo8912/mp-plugins/main/icons/multitrackereditor.png",
@@ -11,7 +11,7 @@
     "history": {
       "v1.8": "优化qBittorrent tracker替换校验逻辑，增加重试与延迟机制，提升成功率。",
       "v1.7": "logo文件名与插件名完全一致，彻底解决插件识别和图标显示问题。",
-      "v1.6": "更换logo文件名为multitrackereditor_v2.png，彻底解决浏览器缓存导致的图标不刷新问题。",
+      "v1.6": "替换logo文件名为multitrackereditor_v2.png，彻底解决浏览器缓存导致的图标不刷新问题。",
       "v1.5": "默认通知选项改为'仅有替换任务时通知'，优化用户体验。",
       "v1.4": "通知下拉框选项改为title/value结构，彻底解决[object Object]显示问题，完全兼容官方插件市场。",
       "v1.3": "修正通知下拉框为官方兼容格式，彻底解决[object Object]问题，测试官方图标兼容性。",
@@ -48,6 +48,36 @@
       "v2.5": "优化类型判断逻辑，增加类型ID配置项",
       "v2.0": "重构插件，支持MoviePilot标准插件格式",
       "v1.0": "初始版本"
+    }
+  },
+  "tmdbstoryliner": {
+    "name": "剧情更新器",
+    "description": "定时从TMDB获取剧集和电影的剧情简介，并将英文内容翻译成中文",
+    "version": "1.25",
+    "v2": true,
+    "icon": "https://raw.githubusercontent.com/leo8912/mp-plugins/main/icons/tmdbstoryliner.png",
+    "author": "leo",
+    "homepage": "https://github.com/leo8912",
+    "level": 1,
+    "history": {
+      "v1.25": "将插件名称从TMDB剧情简介更新器修改为剧情更新器",
+      "v1.24": "修复媒体类型识别错误，添加重试机制和详细翻译日志",
+      "v1.23": "修复定时任务注册方式，参考其他插件实现立即运行一次功能",
+      "v1.22": "修复定时任务注册错误和立即运行按钮无法点击的问题",
+      "v1.21": "实现完整的剧集每集剧情简介更新功能，支持指定媒体服务器和媒体库路径",
+      "v1.20": "完善获取真实媒体库目录功能，添加立即手动运行按钮",
+      "v1.19": "完善获取媒体库目录功能，修复版本号更新后未执行压缩脚本的问题",
+      "v1.13": "修复依赖导入问题，通过正确导入MediaServerChain解决插件依赖缺失问题，同时获取真实的媒体库目录信息",
+      "v1.12": "修复媒体服务器选择逻辑，即使没有连接的服务器也能显示配置的服务器列表",
+      "v1.8": "增加媒体服务器选择功能，可指定特定媒体库进行更新",
+      "v1.7": "修复Scheduler使用问题，解决配置界面无法显示的问题",
+      "v1.6": "修复Scheduler使用问题，解决配置界面无法显示的问题",
+      "v1.5": "参考官方插件规范重构插件初始化和属性定义",
+      "v1.4": "修复插件缺少stop_service方法的问题",
+      "v1.3": "修复插件初始化问题，添加stop_service调用",
+      "v1.2": "修复配置页面无法显示的问题，正确使用实例变量",
+      "v1.1": "修复配置页面显示问题，更新版本号管理",
+      "v1.0": "初始版本，实现基础功能框架"
     }
   }
 }

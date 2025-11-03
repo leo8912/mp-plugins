@@ -1,5 +1,5 @@
 # Simple PowerShell script to compress MoviePilot plugins
-$PluginName = "sitemonitor"
+$PluginName = "tmdbstoryliner"
 $PluginPath = ".\plugins\$PluginName"
 
 # Check if plugin directory exists

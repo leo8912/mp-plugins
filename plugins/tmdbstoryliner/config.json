@@ -1,0 +1,9 @@
+{
+  "name": "剧情更新器",
+  "description": "定时从TMDB获取剧集和电影的剧情简介，并将英文内容翻译成中文",
+  "version": "1.14",
+  "icon": "https://raw.githubusercontent.com/leo8912/mp-plugins/main/icons/tmdbstoryliner.png",
+  "author": "leo",
+  "homepage": "https://github.com/leo8912",
+  "level": 1
+}
