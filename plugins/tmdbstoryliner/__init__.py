@@ -21,7 +21,7 @@ class TmdbStoryliner(_PluginBase):
     plugin_icon = "https://raw.githubusercontent.com/leo8912/mp-plugins/main/icons/tmdbstoryliner.png"
     plugin_author = "leo"
     author_url = "https://github.com/leo8912"
-    plugin_version = "2.2"
+    plugin_version = "2.3"
     plugin_locale = "zh"
     plugin_config_prefix = "tmdbstoryliner_"
     plugin_site = "https://www.themoviedb.org/"
@@ -1478,35 +1478,43 @@ class TmdbStoryliner(_PluginBase):
                 logger.debug(f"处理后的overview: '{overview}', 长度: {len(overview)}")
                 logger.debug(f"处理后的name: '{name}', 长度: {len(name)}")
                 
-                # 只有在中文接口确实没有内容时才去获取英文内容
-                # 判断标准：overview和name都为空或者只有其中一个为空
-                if not overview and not name:
-                    logger.debug(f"中文区域无任何内容，尝试获取英文内容: series_id={series_id}, S{season_number:02d}E{episode_number:02d}")
-                    english_result = self._get_english_episode_details(series_id, season_number, episode_number)
-                    return english_result
-                elif not overview or not name:
-                    logger.debug(f"中文区域内容不完整，尝试获取英文内容: series_id={series_id}, S{season_number:02d}E{episode_number:02d}")
-                    english_result = self._get_english_episode_details(series_id, season_number, episode_number)
-                    # 如果中文区有内容而英文区没有，则合并两个结果
-                    if overview and not english_result.get('overview'):
-                        english_result['overview'] = overview
-                    if name and not english_result.get('name'):
-                        english_result['name'] = name
-                    return english_result
+                # 检查是否需要获取英文内容来补充缺失的信息
+                need_english_content = False
+                if not overview or not name:
+                    logger.debug(f"中文区域内容不完整，尝试获取英文内容补充: series_id={series_id}, S{season_number:02d}E{episode_number:02d}")
+                    need_english_content = True
+                elif (overview and not self._is_chinese(overview)) or (name and not self._is_chinese(name)):
+                    logger.debug(f"中文区域返回非中文内容，尝试获取英文内容: series_id={series_id}, S{season_number:02d}E{episode_number:02d}")
+                    need_english_content = True
                 
-                # 标记是否需要翻译
-                result['_need_translate'] = False
-                
-                # 检查内容是否需要翻译
-                if overview or name:
-                    # 如果是纯ASCII字符(英文)，需要翻译
-                    if (overview and overview.isascii()) or (name and name.isascii()):
-                        logger.debug(f"中文区返回英文内容，需要翻译: {overview[:50]}...")
-                        result['_need_translate'] = True
-                    # 如果不是中文内容，也需要翻译
-                    elif not self._is_chinese(overview) or not self._is_chinese(name):
-                        result['_need_translate'] = True
-                        logger.debug(f"内容不是中文，需要翻译: overview={overview[:50]}..., name={name[:50]}...")
+                # 如果需要获取英文内容来补充或替换
+                if need_english_content:
+                    english_result = self._get_english_episode_details(series_id, season_number, episode_number)
+                    # 合并中英文内容，优先使用中文内容，缺失的部分用英文补充
+                    if not overview and english_result.get('overview'):
+                        overview = english_result.get('overview', '')
+                    if not name and english_result.get('name'):
+                        name = english_result.get('name', '')
+                    
+                    # 判断是否需要翻译（只要有英文内容就需要翻译）
+                    result['_need_translate'] = english_result.get('_need_translate', False) or (
+                        (overview and not self._is_chinese(overview)) or 
+                        (name and not self._is_chinese(name))
+                    )
+                else:
+                    # 标记是否需要翻译
+                    result['_need_translate'] = False
+                    
+                    # 检查内容是否需要翻译
+                    if overview or name:
+                        # 如果是纯ASCII字符(英文)，需要翻译
+                        if (overview and overview.isascii()) or (name and name.isascii()):
+                            logger.debug(f"中文区返回英文内容，需要翻译: {overview[:50]}...")
+                            result['_need_translate'] = True
+                        # 如果不是中文内容，也需要翻译
+                        elif not self._is_chinese(overview) or not self._is_chinese(name):
+                            result['_need_translate'] = True
+                            logger.debug(f"内容不是中文，需要翻译: overview={overview[:50]}..., name={name[:50]}...")
                 
                 # 更新结果中的overview和name字段
                 result['overview'] = overview
