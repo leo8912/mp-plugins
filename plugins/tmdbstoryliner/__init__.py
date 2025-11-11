@@ -21,7 +21,7 @@ class TmdbStoryliner(_PluginBase):
     plugin_icon = "https://raw.githubusercontent.com/leo8912/mp-plugins/main/icons/tmdbstoryliner.png"
     plugin_author = "leo"
     author_url = "https://github.com/leo8912"
-    plugin_version = "2.0"
+    plugin_version = "2.1"
     plugin_locale = "zh"
     plugin_config_prefix = "tmdbstoryliner_"
     plugin_site = "https://www.themoviedb.org/"
@@ -1446,89 +1446,88 @@ class TmdbStoryliner(_PluginBase):
         """
         获取剧集详情
         """
-        # 首先尝试获取中文内容
-        try:
-            url = f"https://api.themoviedb.org/3/tv/{series_id}/season/{season_number}/episode/{episode_number}"
-            params = {
-                "api_key": self._tmdb_api_key,
-                "language": "zh-CN"
-            }
-            response = requests.get(url, params=params, timeout=30)
-            response.raise_for_status()
-            result = response.json()
-            
-            logger.debug(f"从TMDB获取到的原始数据: {result}")
-            
-            # 处理返回的内容
-            overview = result.get('overview', '')
-            # 确保overview不为None并进行处理
-            if overview is not None:
-                overview = overview.strip()
-            else:
-                overview = ''
+        # 首先尝试获取中文内容，增加重试机制
+        for retry in range(5):  # 增加重试次数到5次
+            try:
+                url = f"https://api.themoviedb.org/3/tv/{series_id}/season/{season_number}/episode/{episode_number}"
+                params = {
+                    "api_key": self._tmdb_api_key,
+                    "language": "zh-CN"
+                }
+                response = requests.get(url, params=params, timeout=30)
+                response.raise_for_status()
+                result = response.json()
                 
-            name = result.get('name', '')
-            # 确保name不为None并进行处理
-            if name is not None:
-                name = name.strip()
-            else:
-                name = ''
-            
-            logger.debug(f"处理后的overview: '{overview}', 长度: {len(overview)}")
-            logger.debug(f"处理后的name: '{name}', 长度: {len(name)}")
-            
-            # 特殊处理：如果中文区没有内容，或者只有部分内容，尝试获取英文内容
-            # 修复：即使有标题但没有剧情简介，也应该尝试获取英文区的完整内容
-            if not overview or not name:
-                logger.debug(f"中文区域内容不完整，尝试获取英文内容: series_id={series_id}, S{season_number:02d}E{episode_number:02d}")
-                english_result = self._get_english_episode_details(series_id, season_number, episode_number)
-                # 如果中文区有内容而英文区没有，则合并两个结果
-                if overview and not english_result.get('overview'):
-                    english_result['overview'] = overview
-                if name and not english_result.get('name'):
-                    english_result['name'] = name
-                return english_result
-            
-            # 标记是否需要翻译
-            result['_need_translate'] = False
-            
-            # 检查内容是否需要翻译
-            if overview or name:
-                # 如果是纯ASCII字符(英文)，需要翻译
-                if (overview and overview.isascii()) or (name and name.isascii()):
-                    logger.debug(f"中文区返回英文内容，需要翻译: {overview[:50]}...")
-                    result['_need_translate'] = True
-                # 如果不是中文内容，也需要翻译
-                elif not self._is_chinese(overview) or not self._is_chinese(name):
-                    result['_need_translate'] = True
-                    logger.debug(f"内容不是中文，需要翻译: overview={overview[:50]}..., name={name[:50]}...")
-            
-            # 更新结果中的overview和name字段
-            result['overview'] = overview
-            result['name'] = name
-            
-            logger.debug(f"最终返回的overview: '{result['overview']}', 长度: {len(result['overview'])}")
-            logger.debug(f"最终返回的name: '{result['name']}', 长度: {len(result['name'])}")
-            
-            return result
-        except Exception as e:
-            logger.warning(f"获取中文剧集详情失败，尝试获取英文内容：{e}")
-            # 如果获取中文内容失败，尝试获取英文内容（增加重试机制）
-            for i in range(3):  # 重试3次
-                try:
-                    return self._get_english_episode_details(series_id, season_number, episode_number)
-                except Exception as e2:
-                    logger.warning(f"第{i+1}次获取英文剧集详情失败：{e2}")
-                    if i < 2:  # 不是最后一次尝试，等待后重试
-                        time.sleep(5)
-                    else:
-                        # 最后一次尝试也失败了
-                        logger.error(f"获取剧集详情完全失败：{e}")
-                        return {
-                            'overview': '',
-                            'name': '',
-                            '_need_translate': False
-                        }
+                logger.debug(f"从TMDB获取到的原始数据: {result}")
+                
+                # 处理返回的内容
+                overview = result.get('overview', '')
+                # 确保overview不为None并进行处理
+                if overview is not None:
+                    overview = overview.strip()
+                else:
+                    overview = ''
+                    
+                name = result.get('name', '')
+                # 确保name不为None并进行处理
+                if name is not None:
+                    name = name.strip()
+                else:
+                    name = ''
+                
+                logger.debug(f"处理后的overview: '{overview}', 长度: {len(overview)}")
+                logger.debug(f"处理后的name: '{name}', 长度: {len(name)}")
+                
+                # 只有在中文接口确实没有内容时才去获取英文内容
+                # 判断标准：overview和name都为空或者只有其中一个为空
+                if not overview and not name:
+                    logger.debug(f"中文区域无任何内容，尝试获取英文内容: series_id={series_id}, S{season_number:02d}E{episode_number:02d}")
+                    english_result = self._get_english_episode_details(series_id, season_number, episode_number)
+                    return english_result
+                elif not overview or not name:
+                    logger.debug(f"中文区域内容不完整，尝试获取英文内容: series_id={series_id}, S{season_number:02d}E{episode_number:02d}")
+                    english_result = self._get_english_episode_details(series_id, season_number, episode_number)
+                    # 如果中文区有内容而英文区没有，则合并两个结果
+                    if overview and not english_result.get('overview'):
+                        english_result['overview'] = overview
+                    if name and not english_result.get('name'):
+                        english_result['name'] = name
+                    return english_result
+                
+                # 标记是否需要翻译
+                result['_need_translate'] = False
+                
+                # 检查内容是否需要翻译
+                if overview or name:
+                    # 如果是纯ASCII字符(英文)，需要翻译
+                    if (overview and overview.isascii()) or (name and name.isascii()):
+                        logger.debug(f"中文区返回英文内容，需要翻译: {overview[:50]}...")
+                        result['_need_translate'] = True
+                    # 如果不是中文内容，也需要翻译
+                    elif not self._is_chinese(overview) or not self._is_chinese(name):
+                        result['_need_translate'] = True
+                        logger.debug(f"内容不是中文，需要翻译: overview={overview[:50]}..., name={name[:50]}...")
+                
+                # 更新结果中的overview和name字段
+                result['overview'] = overview
+                result['name'] = name
+                
+                logger.debug(f"最终返回的overview: '{result['overview']}', 长度: {len(result['overview'])}")
+                logger.debug(f"最终返回的name: '{result['name']}', 长度: {len(result['name'])}")
+                
+                return result
+            except Exception as e:
+                logger.warning(f"第{retry+1}次获取中文剧集详情失败: {e}")
+                if retry < 4:  # 不是最后一次尝试，等待后重试
+                    time.sleep(5)
+                else:
+                    # 最后一次尝试也失败了，记录错误并返回空结果
+                    logger.error(f"获取剧集详情完全失败：{e}")
+                    return {
+                        'overview': '',
+                        'name': '',
+                        '_need_translate': False
+                    }
     
     def get_tmdb_episode_details_ex(self, series_id: int, season_number: int, episode_number: int) -> dict:
         """
@@ -1628,52 +1627,57 @@ class TmdbStoryliner(_PluginBase):
         """
         获取英文剧集详情
         """
-        try:
-            url = f"https://api.themoviedb.org/3/tv/{series_id}/season/{season_number}/episode/{episode_number}"
-            params = {
-                "api_key": self._tmdb_api_key,
-                "language": "en-US"
-            }
-            response = requests.get(url, params=params, timeout=30)
-            response.raise_for_status()
-            result = response.json()
-            logger.debug(f"从TMDB获取到的英文原始数据: {result}")
-            # 英文内容肯定需要翻译
-            result['_need_translate'] = True
-            
-            # 对英文内容也进行strip处理
-            if 'overview' in result:
-                overview = result['overview']
-                if overview is not None:
-                    result['overview'] = overview.strip()
+        # 增加重试机制
+        for retry in range(5):  # 增加重试次数到5次
+            try:
+                url = f"https://api.themoviedb.org/3/tv/{series_id}/season/{season_number}/episode/{episode_number}"
+                params = {
+                    "api_key": self._tmdb_api_key,
+                    "language": "en-US"
+                }
+                response = requests.get(url, params=params, timeout=30)
+                response.raise_for_status()
+                result = response.json()
+                logger.debug(f"从TMDB获取到的英文原始数据: {result}")
+                # 英文内容肯定需要翻译
+                result['_need_translate'] = True
+                
+                # 对英文内容也进行strip处理
+                if 'overview' in result:
+                    overview = result['overview']
+                    if overview is not None:
+                        result['overview'] = overview.strip()
+                    else:
+                        result['overview'] = ''
                 else:
                     result['overview'] = ''
-            else:
-                result['overview'] = ''
-                
-            if 'name' in result:
-                name = result['name']
-                if name is not None:
-                    result['name'] = name.strip()
+                    
+                if 'name' in result:
+                    name = result['name']
+                    if name is not None:
+                        result['name'] = name.strip()
+                    else:
+                        result['name'] = ''
                 else:
                     result['name'] = ''
-            else:
-                result['name'] = ''
-                
-            logger.debug(f"处理后的英文overview: '{result['overview']}', 长度: {len(result['overview'])}")
-            logger.debug(f"处理后的英文name: '{result['name']}', 长度: {len(result['name'])}")
-                
-            return result
-        except Exception as e2:
-            logger.error(f"获取英文剧集详情也失败：{e2}")
-            # 返回空的结果而不是{}
-
-
-            return {
-                'overview': '',
-                'name': '',
-                '_need_translate': False
-            }
+                    
+                logger.debug(f"处理后的英文overview: '{result['overview']}', 长度: {len(result['overview'])}")
+                logger.debug(f"处理后的英文name: '{result['name']}', 长度: {len(result['name'])}")
+                    
+                return result
+            except Exception as e:
+                logger.warning(f"第{retry+1}次获取英文剧集详情失败: {e}")
+                if retry < 4:  # 不是最后一次尝试，等待后重试
+                    time.sleep(5)
+                else:
+                    # 最后一次尝试也失败了
+                    logger.error(f"获取英文剧集详情完全失败：{e}")
+                    # 返回空的结果而不是{}
+                    return {
+                        'overview': '',
+                        'name': '',
+                        '_need_translate': False
+                    }
     
     def translate_text(self, text: str, source_lang: str = "en", target_lang: str = "zh") -> str:
         """
