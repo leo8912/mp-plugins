@@ -22,17 +22,11 @@ class TmdbStoryliner(_PluginBase):
     plugin_author = "leo"
     author_url = "https://github.com/leo8912"
     plugin_version = "2.0"
-    plugin_version = "1.112"
     plugin_locale = "zh"
     plugin_config_prefix = "tmdbstoryliner_"
     plugin_site = "https://www.themoviedb.org/"
     plugin_order = 10
 
-    plugin_order = 10
-
-    plugin_order = 10
-
-    plugin_order = 10
 
     plugin_order = 10
     
