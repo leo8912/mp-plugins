@@ -26,9 +26,8 @@ class TmdbStoryliner(_PluginBase):
     plugin_config_prefix = "tmdbstoryliner_"
     plugin_site = "https://www.themoviedb.org/"
     plugin_order = 10
-
-
-    plugin_order = 10
+    # 可使用的用户级别
+    auth_level = 1
     
     # 插件配置项
     _enabled = False

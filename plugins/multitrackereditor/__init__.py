@@ -27,6 +27,7 @@ class multitrackereditor(_PluginBase):
     author_url = "https://github.com/leo8912"
     plugin_config_prefix = "multitrackereditor_"
     plugin_order = 30
+    # 可使用的用户级别
     auth_level = 1
 
     def __init__(self):
