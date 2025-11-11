@@ -21,7 +21,7 @@ class TmdbStoryliner(_PluginBase):
     plugin_icon = "https://raw.githubusercontent.com/leo8912/mp-plugins/main/icons/tmdbstoryliner.png"
     plugin_author = "leo"
     author_url = "https://github.com/leo8912"
-    plugin_version = "2.1"
+    plugin_version = "2.2"
     plugin_locale = "zh"
     plugin_config_prefix = "tmdbstoryliner_"
     plugin_site = "https://www.themoviedb.org/"
@@ -2026,147 +2026,7 @@ class TmdbStoryliner(_PluginBase):
                 return True
         return False
     
-    def _should_skip_episode(self, iteminfo: dict, episode_details: dict, series_id: int, season_number: int, episode_number: int) -> bool:
-        """
-        判断是否应该跳过剧集更新（智能跳过策略）
-        
-        :param iteminfo: 媒体服务器中的剧集信息
-        :param episode_details: TMDB获取的剧集详情
-        :param series_id: 剧集TMDB ID
-        :param season_number: 季号
-        :param episode_number: 集号
-        :return: 是否应该跳过更新
-        """
-        import time
-        from datetime import datetime, timedelta
-        
-        # 构建剧集唯一标识
-        episode_key = f"{series_id}_S{season_number:02d}E{episode_number:02d}"
-        current_time = time.time()
-        
-        # 获取媒体服务器中已有的信息
-        existing_overview = iteminfo.get('Overview', '').strip()
-        existing_name = iteminfo.get('Name', '').strip()
-        
-        # 获取TMDB中的信息
-        tmdb_overview = episode_details.get('overview', '').strip()
-        tmdb_name = episode_details.get('name', '').strip()
-        
-        # 获取是否需要翻译的标记
-        need_translate = episode_details.get('_need_translate', False)
-        
-        # 添加详细的本地信息日志
-        logger.info(f"检查本地剧集信息 {episode_key}:")
-        logger.info(f"  本地剧情简介: {'存在' if existing_overview else '不存在'} ({len(existing_overview)} 字符)")
-        logger.info(f"  本地标题: {'存在' if existing_name else '不存在'} ({len(existing_name)} 字符)")
-        logger.info(f"  TMDB剧情简介: {'存在' if tmdb_overview else '不存在'} ({len(tmdb_overview)} 字符)")
-        logger.info(f"  TMDB标题: {'存在' if tmdb_name else '不存在'} ({len(tmdb_name)} 字符)")
-        
-        # 1. 检查本地是否已包含原文且与TMDB一致（增强的跳过逻辑）
-        if self._contains_original_and_matches(existing_overview, tmdb_overview) and \
-           self._contains_original_and_matches(existing_name, tmdb_name):
-            logger.info(f"剧集 {episode_key} 本地内容已包含原文且与TMDB一致，跳过更新")
-            return True
-        
-        # 2. 如果TMDB没有提供任何信息，则跳过
-        if not tmdb_overview and not tmdb_name:
-            logger.debug(f"TMDB未提供任何信息，跳过更新 {episode_key}")
-            return True
-        
-        # 3. 如果媒体服务器中已存在中文内容，则跳过（这是最重要的判断）
-        existing_overview_is_chinese = self._is_chinese(existing_overview)
-        existing_name_is_chinese = self._is_chinese(existing_name)
-        
-        if existing_overview_is_chinese and existing_name_is_chinese and existing_overview and existing_name:
-            logger.info(f"剧集 {episode_key} 媒体服务器中已存在中文标题和剧情简介，跳过更新")
-            # 记录为已完成，下次不再更新
-            self._update_history_record(series_id, season_number, episode_number, "updated")
-            return True
-        
-        # 4. 如果TMDB提供了信息，但媒体服务器中已有的内容和TMDB内容完全一致，则跳过
-        if existing_overview == tmdb_overview and existing_name == tmdb_name and (tmdb_overview or tmdb_name):
-            logger.debug(f"剧集 {episode_key} 现有内容和TMDB内容完全一致，跳过更新")
-            return True
-            
-        # 5. 检查TMDB内容是否为中文
-        tmdb_overview_is_chinese = self._is_chinese(tmdb_overview)
-        tmdb_name_is_chinese = self._is_chinese(tmdb_name)
-        
-        # 添加中文检测日志
-        logger.debug(f"本地内容中文检测 - 剧情简介: {existing_overview_is_chinese}, 标题: {existing_name_is_chinese}")
-        logger.debug(f"TMDB内容中文检测 - 剧情简介: {tmdb_overview_is_chinese}, 标题: {tmdb_name_is_chinese}")
-        
-        # 6. 特殊处理：如果媒体服务器中剧情简介为空，但TMDB有内容，则需要更新
-        if not existing_overview and tmdb_overview:
-            logger.debug(f"剧集 {episode_key} 媒体服务器中剧情简介为空但TMDB有内容，需要更新")
-            return False
-            
-        # 7. 特殊处理：如果媒体服务器中标题为空，但TMDB有内容，则需要更新
-        if not existing_name and tmdb_name:
-            logger.debug(f"剧集 {episode_key} 媒体服务器中标题为空但TMDB有内容，需要更新")
-            return False
-        
-        # 8. 如果TMDB内容需要翻译，但媒体服务器中已经是中文，则检查是否需要更新
-        if need_translate and (existing_overview_is_chinese or existing_name_is_chinese):
-            logger.debug(f"剧集 {episode_key} TMDB内容需要翻译但媒体服务器中已有中文内容，检查是否需要更新")
-            # 如果内容完全相同，则跳过
-            if existing_overview == tmdb_overview and existing_name == tmdb_name:
-                logger.debug(f"剧集 {episode_key} 内容完全相同，跳过更新")
-                return True
-            # 其他情况需要更新（例如TMDB获取到新内容）
-            logger.debug(f"剧集 {episode_key} 需要检查更新")
-            return False
-        
-        # 9. 如果现有内容和TMDB内容都是中文且不为空，则跳过
-        if (existing_overview and existing_overview_is_chinese) and \
-           (existing_name and existing_name_is_chinese) and \
-           (tmdb_overview and tmdb_overview_is_chinese) and \
-           (tmdb_name and tmdb_name_is_chinese):
-            logger.debug(f"剧集 {episode_key} 现有内容和TMDB内容均为中文，跳过更新")
-            # 记录为已完成，下次不再更新
-            self._update_history_record(series_id, season_number, episode_number, "updated")
-            return True
-        
-        # 10. 检查更新历史记录，实现智能跳过策略
-        if episode_key in self._update_history:
-            episode_history = self._update_history[episode_key]
-            last_update_time = episode_history.get('last_update', 0)
-            update_count = episode_history.get('update_count', 0)
-            skip_count = episode_history.get('skip_count', 0)
-            last_status = episode_history.get('last_status', '')
-            
-            # 如果上次更新状态是"updated"，说明已经更新过，可以跳过
-            if last_status == "updated":
-                logger.debug(f"剧集 {episode_key} 上次更新状态为已更新，跳过更新")
-                return True
-            
-            # 判断剧集是否已完结（这里简化处理，实际应该传入剧集详情）
-            is_ended = self._series_status_cache.get(series_id, {}).get('ended', False) if series_id in self._series_status_cache else False
-            
-            # 对于已完结的剧集，采用更长的更新间隔
-            if is_ended:
-                # 已完结剧集每7天更新一次
-                update_interval = 7 * 24 * 3600
-            else:
-                # 连载中剧集每天更新一次
-                update_interval = 24 * 3600
-            
-            # 如果距离上次更新时间小于更新间隔，则跳过
-            if current_time - last_update_time < update_interval:
-                logger.debug(f"剧集 {episode_key} 未到更新时间，跳过更新")
-                return True
-            
-            # 如果连续多次更新都没有变化，则增加跳过概率
-            if update_count > 3 and skip_count > update_count // 2:
-                # 50%概率跳过
-                import random
-                if random.random() < 0.5:
-                    logger.debug(f"剧集 {episode_key} 连续多次更新无变化，随机跳过更新")
-                    return True
-        
-        # 默认不跳过
-        logger.debug(f"剧集 {episode_key} 需要更新")
-        return False
+
     
     def _contains_original_and_matches(self, existing_text: str, tmdb_text: str) -> bool:
         """
