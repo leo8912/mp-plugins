@@ -21,7 +21,7 @@ class TmdbStoryliner(_PluginBase):
     plugin_icon = "https://raw.githubusercontent.com/leo8912/mp-plugins/main/icons/tmdbstoryliner.png"
     plugin_author = "leo"
     author_url = "https://github.com/leo8912"
-    plugin_version = "2.3"
+    plugin_version = "2.7"
     plugin_locale = "zh"
     plugin_config_prefix = "tmdbstoryliner_"
     plugin_site = "https://www.themoviedb.org/"
@@ -54,6 +54,8 @@ class TmdbStoryliner(_PluginBase):
     # 添加缓存和历史记录
     _series_status_cache = {}  # 剧集状态缓存
     _update_history = {}       # 更新历史记录
+    _start_time = None         # 任务开始时间
+    _max_runtime = 3600        # 最大运行时间(秒)，默认1小时
     
     def init_plugin(self, config: Optional[dict] = None):
         """
@@ -915,11 +917,45 @@ class TmdbStoryliner(_PluginBase):
         
         logger.info("开始更新TMDB剧情简介")
         
+        # 设置任务开始时间
+        self._start_time = time.time()
+        
         # 只更新电视剧，移除电影更新
         if self._update_series:
             self.update_series_storylines()
         
         logger.info("TMDB剧情简介更新完成")
+    
+    def _check_timeout(self) -> bool:
+        """
+        检查任务是否超时
+        
+        :return: True表示超时，False表示未超时
+        """
+        if self._start_time is None:
+            return False
+            
+        elapsed_time = time.time() - self._start_time
+        if elapsed_time > self._max_runtime:
+            logger.warning(f"任务执行时间已超过最大运行时间 {self._max_runtime} 秒，停止执行")
+            return True
+            
+        return False
+    
+    def _check_run_conditions(self) -> bool:
+        """
+        检查运行条件：插件是否启用以及是否超时
+        
+        :return: True表示可以继续运行，False表示应该停止
+        """
+        if not self._enabled:
+            logger.info("插件已禁用，停止执行")
+            return False
+            
+        if self._check_timeout():
+            return False
+            
+        return True
     
     def update_series_storylines(self):
         """
@@ -927,6 +963,10 @@ class TmdbStoryliner(_PluginBase):
         """
         logger.info("开始更新电视剧剧情简介")
         
+        # 检查插件是否应该继续运行
+        if not self._check_run_conditions():
+            return
+            
         # 1. 获取媒体库中的电视剧
         # 获取活动的媒体服务器
         service_infos = self.service_infos()
@@ -942,11 +982,19 @@ class TmdbStoryliner(_PluginBase):
             
             # 遍历每个活动的媒体服务器
             for server_name, server_info in service_infos.items():
+                # 检查插件是否仍应运行
+                if not self._check_run_conditions():
+                    return
+                    
                 # 获取该服务器的所有媒体库
                 libraries = mediaserver_chain.librarys(server_name)
                 
                 # 遍历每个媒体库
                 for library in libraries:
+                    # 检查插件是否仍应运行
+                    if not self._check_run_conditions():
+                        return
+                        
                     # 如果用户指定了媒体库路径，则检查是否匹配
                     if self._library_paths and f"{server_name}:{library.id}" not in self._library_paths:
                         continue
@@ -957,6 +1005,10 @@ class TmdbStoryliner(_PluginBase):
                     
                     # 遍历每部电视剧
                     for series in tv_series:
+                        # 检查插件是否仍应运行
+                        if not self._check_run_conditions():
+                            return
+                            
                         # 检查媒体类型，只处理电视剧类型
                         if hasattr(series, 'type') and series.type != 'TV':
                             continue
@@ -969,6 +1021,10 @@ class TmdbStoryliner(_PluginBase):
                         # 2. 从TMDB获取电视剧详细信息（带重试机制）
                         series_details = None
                         for i in range(3):  # 最多重试3次
+                            # 检查插件是否仍应运行
+                            if not self._check_run_conditions():
+                                return
+                                
                             series_details = self.get_tmdb_series_details(series.tmdbid)
                             if series_details:
                                 break
@@ -990,6 +1046,10 @@ class TmdbStoryliner(_PluginBase):
                             season_items = self._get_items(server_name, server_info.type, series.item_id, 'Season')
                             if season_items:
                                 for season_item in season_items.get("Items", []):
+                                    # 检查插件是否仍应运行
+                                    if not self._check_run_conditions():
+                                        return
+                                        
                                     # 检查季号是否匹配
                                     season_index = season_item.get('IndexNumber')
                                     if season_index is not None:
@@ -997,6 +1057,10 @@ class TmdbStoryliner(_PluginBase):
                                         episodes_in_season = self._get_items(server_name, server_info.type, season_item.get('Id'), 'Episode')
                                         if episodes_in_season:
                                             for episode_item in episodes_in_season.get("Items", []):
+                                                # 检查插件是否仍应运行
+                                                if not self._check_run_conditions():
+                                                    return
+                                                    
                                                 # 以"S{season}E{episode}"格式存储剧集信息
                                                 episode_index = episode_item.get('IndexNumber')
                                                 if episode_index is not None:
@@ -1007,6 +1071,10 @@ class TmdbStoryliner(_PluginBase):
                         
                         # 遍历每个季
                         for season in seasons:
+                            # 检查插件是否仍应运行
+                            if not self._check_run_conditions():
+                                return
+                                
                             # 获取季信息
                             season_number = getattr(season, 'season', getattr(season, 'Season', None))
                             if season_number is None:
@@ -1029,6 +1097,10 @@ class TmdbStoryliner(_PluginBase):
                             # 遍历该季的每一集
                             if episodes_list:
                                 for episode_number in episodes_list:
+                                    # 检查插件是否仍应运行
+                                    if not self._check_run_conditions():
+                                        return
+                                        
                                     # 确保集号是数字类型
                                     if not isinstance(episode_number, (int, float)):
                                         logger.warning(f"无效的集号类型 {series.title} 第{season_number}季: {episode_number}")
@@ -1040,6 +1112,10 @@ class TmdbStoryliner(_PluginBase):
                                     # 获取剧集详细信息（带重试机制）
                                     episode_details = None
                                     for i in range(5):  # 增加重试次数到5次
+                                        # 检查插件是否仍应运行
+                                        if not self._check_run_conditions():
+                                            return
+                                            
                                         episode_details = self.get_tmdb_episode_details(series.tmdbid, season_number, episode_number)
                                         if episode_details:
                                             break
@@ -1322,33 +1398,10 @@ class TmdbStoryliner(_PluginBase):
                                                                 
                                                                 if name and (need_translate or not self._is_chinese(name)):
                                                                     logger.info(f"{series.title} S{season_index:02d}E{episode_index:02d} 标题需要翻译: {name}")
-                                                                    translated_name = self.translate_text(name)
-                                                                    if translated_name != name:
-                                                                        logger.info(f"已翻译 {series.title} S{season_index:02d}E{episode_index:02d} 标题")
-                                                                    else:
-                                                                        logger.info(f"{series.title} S{season_index:02d}E{episode_index:02d} 标题无需翻译或翻译失败")
-                                                                else:
-                                                                    logger.info(f"{series.title} S{season_index:02d}E{episode_index:02d} 标题无需翻译")
-                                                            elif self._translate_service == "ai":
-                                                                logger.debug(f"开始AI翻译处理 - 服务: {self._translate_service}")
-                                                                # 检查是否需要翻译（包括英文内容或者中文区返回英文内容的情况）
-                                                                if overview and (need_translate or not self._is_chinese(overview)):
-                                                                    logger.info(f"{series.title} S{season_index:02d}E{episode_index:02d} 剧情简介需要翻译: {overview[:50]}...")
-                                                                    translated_overview = self.ai_translate_text(overview)
-                                                                    if translated_overview != overview:
-                                                                        logger.info(f"已AI翻译 {series.title} S{season_index:02d}E{episode_index:02d} 剧情简介")
-                                                                    else:
-                                                                        logger.info(f"{series.title} S{season_index:02d}E{episode_index:02d} 剧情简介无需翻译或翻译失败")
-                                                                else:
-                                                                    logger.info(f"{series.title} S{season_index:02d}E{episode_index:02d} 剧情简介无需翻译")
-                                                                
-                                                                if name and (need_translate or not self._is_chinese(name)):
-                                                                    logger.info(f"{series.title} S{season_index:02d}E{episode_index:02d} 标题需要翻译: {name}")
                                                                     translated_name = self.ai_translate_text(name)
-                                                                    if translated_name != name:
-                                                                        logger.info(f"已AI翻译 {series.title} S{season_index:02d}E{episode_index:02d} 标题")
-                                                                    else:
-                                                                        logger.info(f"{series.title} S{season_index:02d}E{episode_index:02d} 标题无需翻译或翻译失败")
+                                                                    # 将翻译后的内容与原文结合（标题不需要附加原文）
+                                                                    translated_name = self._combine_translation_with_original(translated_name, name, True)
+                                                                    logger.info(f"已AI翻译 {series.title} S{season_index:02d}E{episode_index:02d} 标题")
                                                                 else:
                                                                     logger.info(f"{series.title} S{season_index:02d}E{episode_index:02d} 标题无需翻译")
                                                             else:
@@ -2125,6 +2178,8 @@ class TmdbStoryliner(_PluginBase):
         # 1. 如果TMDB没有提供任何信息，则跳过
         if not tmdb_overview and not tmdb_name:
             logger.debug(f"TMDB未提供任何信息，跳过更新 {episode_key}")
+            # 记录为已完成，下次不再更新
+            self._update_history_record(series_id, season_number, episode_number, "updated")
             return True
         
         # 2. 检查本地是否已包含原文且与TMDB一致（增强的跳过逻辑）
@@ -2132,12 +2187,16 @@ class TmdbStoryliner(_PluginBase):
         if self._contains_original_and_matches(existing_overview, tmdb_overview) and \
            self._contains_original_and_matches(existing_name, tmdb_name):
             logger.info(f"剧集 {episode_key} 本地内容已包含原文且与TMDB一致，跳过更新")
+            # 记录为已完成，下次不再更新
+            self._update_history_record(series_id, season_number, episode_number, "updated")
             return True
         
         # 3. 检查本地内容与TMDB内容是否完全一致（适用于中文内容）
         # 情况B: 本地内容与TMDB内容完全一致，则跳过更新
         if existing_overview == tmdb_overview and existing_name == tmdb_name and (tmdb_overview or tmdb_name):
             logger.debug(f"剧集 {episode_key} 现有内容和TMDB内容完全一致，跳过更新")
+            # 记录为已完成，下次不再更新
+            self._update_history_record(series_id, season_number, episode_number, "updated")
             return True
             
         # 4. 检查TMDB内容是否为中文
@@ -2169,6 +2228,8 @@ class TmdbStoryliner(_PluginBase):
             if self._contains_original_and_matches(existing_overview, tmdb_overview) and \
                self._contains_original_and_matches(existing_name, tmdb_name):
                 logger.info(f"剧集 {episode_key} 本地中文内容包含的原文与TMDB一致，跳过更新")
+                # 记录为已完成，下次不再更新
+                self._update_history_record(series_id, season_number, episode_number, "updated")
                 return True
             # 其他情况需要更新（例如TMDB获取到新内容）
             logger.debug(f"剧集 {episode_key} 需要检查更新")
@@ -2195,6 +2256,8 @@ class TmdbStoryliner(_PluginBase):
                 if self._contains_original_and_matches(existing_overview, tmdb_overview) and \
                    self._contains_original_and_matches(existing_name, tmdb_name):
                     logger.info(f"剧集 {episode_key} 本地中文内容包含的原文与TMDB英文内容一致，跳过更新")
+                    # 记录为已完成，下次不再更新
+                    self._update_history_record(series_id, season_number, episode_number, "updated")
                     return True
                 else:
                     logger.debug(f"剧集 {episode_key} 本地中文内容与TMDB英文内容不匹配，需要更新")
@@ -2202,6 +2265,8 @@ class TmdbStoryliner(_PluginBase):
             else:
                 # 本地是中文，TMDB是非中文且不需要翻译
                 logger.debug(f"剧集 {episode_key} 本地是中文内容，TMDB是非中文内容且不需要翻译")
+                # 记录为已完成，下次不再更新
+                self._update_history_record(series_id, season_number, episode_number, "updated")
                 return True
         
         # 9. 检查更新历史记录，实现智能跳过策略
