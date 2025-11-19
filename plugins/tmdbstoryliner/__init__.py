@@ -21,7 +21,7 @@ class TmdbStoryliner(_PluginBase):
     plugin_icon = "https://raw.githubusercontent.com/leo8912/mp-plugins/main/icons/tmdbstoryliner.png"
     plugin_author = "leo"
     author_url = "https://github.com/leo8912"
-    plugin_version = "2.7"
+    plugin_version = "2.8"
     plugin_locale = "zh"
     plugin_config_prefix = "tmdbstoryliner_"
     plugin_site = "https://www.themoviedb.org/"
@@ -55,7 +55,7 @@ class TmdbStoryliner(_PluginBase):
     _series_status_cache = {}  # 剧集状态缓存
     _update_history = {}       # 更新历史记录
     _start_time = None         # 任务开始时间
-    _max_runtime = 3600        # 最大运行时间(秒)，默认1小时
+    _max_runtime = 3600       # 最大运行时间(秒)，默认4小时
     
     def init_plugin(self, config: Optional[dict] = None):
         """
@@ -894,6 +894,8 @@ class TmdbStoryliner(_PluginBase):
         try:
             # 通过调度器移除任务
             Scheduler().remove_plugin_job("TmdbStoryliner")
+            # 禁用插件
+            self._enabled = False
         except Exception as e:
             logger.error(f"停止插件服务失败：{e}")
         finally:
@@ -2198,6 +2200,14 @@ class TmdbStoryliner(_PluginBase):
             # 记录为已完成，下次不再更新
             self._update_history_record(series_id, season_number, episode_number, "updated")
             return True
+        
+        # 3.1 检查本地内容是否已包含TMDB内容（翻译后的内容包含原文）
+        if self._contains_original_and_matches(existing_overview, tmdb_overview) and \
+           self._contains_original_and_matches(existing_name, tmdb_name) and (tmdb_overview or tmdb_name):
+            logger.info(f"剧集 {episode_key} 本地内容已包含TMDB内容，跳过更新")
+            # 记录为已完成，下次不再更新
+            self._update_history_record(series_id, season_number, episode_number, "updated")
+            return True
             
         # 4. 检查TMDB内容是否为中文
         tmdb_overview_is_chinese = self._is_chinese(tmdb_overview)
@@ -2235,7 +2245,7 @@ class TmdbStoryliner(_PluginBase):
             logger.debug(f"剧集 {episode_key} 需要检查更新")
             return False
         
-        # 8. 如果现有内容和TMDB内容都是中文且不为空，则跳过
+        # 8. 如果现有内容和TMDB内容都是中文且不为空，则检查是否一致
         # 特别处理：对于中文内容，我们需要检查本地内容和TMDB内容是否一致
         if (existing_overview and existing_overview_is_chinese) and \
            (existing_name and existing_name_is_chinese):
@@ -2249,7 +2259,9 @@ class TmdbStoryliner(_PluginBase):
                     self._update_history_record(series_id, season_number, episode_number, "updated")
                     return True
                 else:
-                    logger.debug(f"剧集 {episode_key} 本地中文内容与TMDB中文内容不一致，需要更新")
+                    logger.info(f"剧集 {episode_key} 本地中文内容与TMDB中文内容不一致，需要更新")
+                    logger.debug(f"本地标题: {existing_name}")
+                    logger.debug(f"TMDB标题: {tmdb_name}")
                     return False
             # 如果TMDB是英文但本地是中文，检查本地是否包含原文
             elif need_translate:
