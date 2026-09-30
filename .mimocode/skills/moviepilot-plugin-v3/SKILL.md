@@ -232,6 +232,7 @@ def get_service(self) -> list[dict]:
 - 比较、缓存键、历史查询、迁移都必须同时处理来源和 ID；复合键用 `build_media_key()`，解析用 `parse_media_key()`，归一用 `resolve_media_identity()`。
 - 通用链路调用改签名：`SearchChain().search_by_id(media_source=..., media_id=...)`，`MediaChain().recognize_media(media_source=..., media_id=..., mtype=...)`；跨源转换用 `MediaChain().convert_media_identity(target_source=..., media_source=..., media_id=...)`。
 - **允许保留原生 ID 的边界**：来源专用链（`TmdbChain` 等）、`/tmdb` 等单源 API、NFO `uniqueid`、Emby/Jellyfin `ProviderIds`、`MediaInfo.tmdb_id` 等辅助字段。纯 TMDB 单源插件内部缓存键用 tmdbid 可以，但只要数据可能被通用链路消费，就升级为身份对。
+- **`MediaServerItem` 已无 `tmdbid`/`imdbid`/`tvdbid` 字段（2026-02 宿主 v3 分支实测）**：条目身份只有 `media_source + media_id`（由 `ProviderIds` 按固定优先级 TMDB→Douban→… 选出唯一一个）。读 TMDB ID：`media_source` 为 `themoviedb` 时取 `int(media_id)`，否则视为无 TMDB 身份（不要把非 TMDB 来源的 `media_id` 当 tmdbid 用）。`WebhookEventInfo` 另有 `tmdb_id` 兼容属性，`MediaServerItem` 没有。
 - 存量数据迁移要幂等：验证新字段 → 回退读旧字段 → 成功后写新删旧 → 可重复执行、不丢数据。
 
 ## 9. 数据库边界（V3）
@@ -333,5 +334,6 @@ python -m pytest tests/v3/myplugin
 | DEBUG 有兼容导入警告 | 旧路径导入 | 按警告末尾推荐路径迁到 app.sdk |
 | 装完插件 ImportError | 缺依赖未声明 | 插件目录 pyproject.toml 声明 |
 | 更新历史/缓存读不到 | JSON 序列化 int 键变 str | 读取时统一 str(key) 或存 str |
+| 日志每个项目都“缺少TMDB ID，跳过处理” | V3 `MediaServerItem` 已删 `tmdbid` 字段 | 读 `media_source == themoviedb` 时的 `media_id`（见 §8） |
 
 详细迁移对照与更新流程：`references/v2-to-v3-migration.md`、`references/update-playbook.md`。

@@ -71,6 +71,7 @@ contexts = SearchChain().search_by_id(
 ```
 
 - 身份比较：`left.media_source == right.media_source and str(left.media_id) == str(right.media_id)`。
+- `MediaServerItem`（2026-02 宿主 v3 分支实测）：V2 的 `tmdbid`/`imdbid`/`tvdbid` 字段已删除，只有 `media_source + media_id`，由 `ProviderIds` 按优先级（TMDB 最先）选出唯一来源；`WebhookEventInfo` 保留 `tmdb_id` 兼容属性，`MediaServerItem` 没有。读 TMDB ID 必须先判 `media_source == MediaSource.TMDB` 再取 `media_id`。
 - 归一/键工具：`resolve_media_identity()`、`build_media_key()`（如 `douban:1295644`）、`parse_media_key()`。
 - 跨源转换：`MediaChain().convert_media_identity(target_source=..., media_source=..., media_id=...)`；插件可实现 `ChainEventType.MediaRecognizeConvert` 参与转换。
 - 不要自研来源别名、复合键、跨源匹配。

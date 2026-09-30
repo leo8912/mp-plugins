@@ -24,7 +24,7 @@ class tmdbstoryliner(_PluginBase):
     plugin_icon = "https://raw.githubusercontent.com/leo8912/mp-plugins/main/icons/tmdbstoryliner.png"
     plugin_author = "leo"
     author_url = "https://github.com/leo8912"
-    plugin_version = "3.0.2"
+    plugin_version = "3.0.3"
     plugin_locale = "zh"
     plugin_config_prefix = "tmdbstoryliner_"
     plugin_site = "https://www.themoviedb.org/"
@@ -888,6 +888,34 @@ class tmdbstoryliner(_PluginBase):
         return item_type.lower() in ('series', 'show', 'tv')
 
     @staticmethod
+    def _get_tmdb_id(series) -> Optional[int]:
+        """读取条目的 TMDB ID。
+
+        V3 的 MediaServerItem 移除了 tmdbid 字段，改为统一身份对
+        media_source + media_id（仅保留一个来源，TMDB 优先级最高）；
+        兼容仍带旧 tmdbid 字段的数据。
+        """
+        legacy = getattr(series, 'tmdbid', None)
+        if legacy:
+            try:
+                return int(legacy)
+            except (TypeError, ValueError):
+                return None
+        source = getattr(series, 'media_source', None)
+        if source is None:
+            return None
+        # MediaSource 枚举的 str() 为传输值 themoviedb；也兼容直接是字符串的情况
+        if str(getattr(source, 'value', source)) != 'themoviedb':
+            return None
+        media_id = getattr(series, 'media_id', None)
+        if not media_id:
+            return None
+        try:
+            return int(str(media_id).strip())
+        except ValueError:
+            return None
+
+    @staticmethod
     def _parse_episode_key(key: str) -> Optional[Tuple[int, int]]:
         """解析 "S01E02" 形式的剧集 key"""
         try:
@@ -951,10 +979,11 @@ class tmdbstoryliner(_PluginBase):
                             return
                         if not self._is_tv_item(series):
                             continue
-                        if not getattr(series, 'tmdbid', None):
+                        tmdb_id = self._get_tmdb_id(series)
+                        if not tmdb_id:
                             logger.warning(f"项目 {getattr(series, 'title', '未知')} 缺少TMDB ID，跳过处理")
                             continue
-                        self._process_series(mediaserver_chain, server_name, server_info, series)
+                        self._process_series(mediaserver_chain, server_name, server_info, series, tmdb_id)
         except Exception as e:
             logger.error(f"更新电视剧剧情简介时发生错误：{e}")
         finally:
@@ -963,7 +992,7 @@ class tmdbstoryliner(_PluginBase):
         logger.info("电视剧剧情简介更新完成")
 
     def _process_series(self, mediaserver_chain, server_name: str, server_info,
-                        series) -> None:
+                        series, tmdb_id: int) -> None:
         """处理单部电视剧：拉取TMDB信息并逐集更新"""
         logger.info(f"开始处理电视剧: {series.title}")
 
@@ -972,7 +1001,7 @@ class tmdbstoryliner(_PluginBase):
         for i in range(3):
             if not self._check_run_conditions():
                 return
-            series_details = self.get_tmdb_series_details(series.tmdbid)
+            series_details = self.get_tmdb_series_details(tmdb_id)
             if series_details:
                 break
             logger.warning(f"获取电视剧 {series.title} 的TMDB信息失败，正在进行第{i + 1}次重试")
@@ -984,7 +1013,7 @@ class tmdbstoryliner(_PluginBase):
 
         # 2. 填充完结状态缓存（供跳过间隔判断使用）
         try:
-            self._is_series_ended(series_details, series.tmdbid)
+            self._is_series_ended(series_details, tmdb_id)
         except Exception as e:
             logger.debug(f"判断剧集完结状态失败: {e}")
 
@@ -1022,11 +1051,11 @@ class tmdbstoryliner(_PluginBase):
                 return
             key = f"S{season_number:02d}E{episode_number:02d}"
             item_id = (episode_items.get(key) or {}).get('Id')
-            self._update_one_episode(server_name, server_info.type, series,
+            self._update_one_episode(server_name, server_info.type, series, tmdb_id,
                                      season_number, episode_number, item_id, use_extended)
 
     def _update_one_episode(self, server_name: str, server_type: str, series,
-                            season_number: int, episode_number: int,
+                            tmdb_id: int, season_number: int, episode_number: int,
                             item_id: Optional[str], use_extended: bool) -> None:
         """更新单集的标题与剧情简介（所有路径共用的唯一实现）"""
         episode_label = f"{series.title} S{season_number:02d}E{episode_number:02d}"
@@ -1042,7 +1071,7 @@ class tmdbstoryliner(_PluginBase):
             if not self._check_run_conditions():
                 return
             episode_details = self.get_tmdb_episode_details(
-                series.tmdbid, season_number, episode_number, extended=use_extended)
+                tmdb_id, season_number, episode_number, extended=use_extended)
             if episode_details:
                 break
             logger.warning(f"获取 {episode_label} 的TMDB信息失败，正在进行第{i + 1}次重试")
@@ -1059,20 +1088,20 @@ class tmdbstoryliner(_PluginBase):
 
         if not overview and not name:
             logger.debug(f"{episode_label} 没有剧情简介和标题")
-            self._update_history_record(series.tmdbid, season_number, episode_number, "skipped")
+            self._update_history_record(tmdb_id, season_number, episode_number, "skipped")
             return
 
         # 2. 获取媒体服务器中的现有信息并判断是否跳过
         iteminfo = self.get_iteminfo(server_name, server_type, item_id)
         if not iteminfo:
             logger.error(f"获取 {episode_label} 详情失败")
-            self._update_history_record(series.tmdbid, season_number, episode_number, "failed")
+            self._update_history_record(tmdb_id, season_number, episode_number, "failed")
             return
 
-        if self._should_skip_episode(iteminfo, episode_details, series.tmdbid,
+        if self._should_skip_episode(iteminfo, episode_details, tmdb_id,
                                      season_number, episode_number):
             logger.info(f"跳过更新 {episode_label} - 内容一致或未到更新时间")
-            self._update_history_record(series.tmdbid, season_number, episode_number, "skipped")
+            self._update_history_record(tmdb_id, season_number, episode_number, "skipped")
             self.save_update_history(episode_label, "电视剧剧集", "已跳过")
             return
 
@@ -1092,7 +1121,7 @@ class tmdbstoryliner(_PluginBase):
         # 5. 保存
         if self.set_iteminfo(server_name, server_type, item_id, iteminfo):
             logger.info(f"已更新 {episode_label} 标题和剧情简介")
-            self._update_history_record(series.tmdbid, season_number, episode_number, "updated")
+            self._update_history_record(tmdb_id, season_number, episode_number, "updated")
 
             if self._enable_notify:
                 self.post_message(
@@ -1105,7 +1134,7 @@ class tmdbstoryliner(_PluginBase):
                 )
         else:
             logger.error(f"更新 {episode_label} 标题和剧情简介失败")
-            self._update_history_record(series.tmdbid, season_number, episode_number, "failed")
+            self._update_history_record(tmdb_id, season_number, episode_number, "failed")
 
         has_translation = (translated_overview != overview) or (translated_name != name)
         self.save_update_history(
