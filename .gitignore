@@ -6,3 +6,6 @@ sitemonitor.zip
 origin/
 tmdbstoryliner.zip
 tmdbstoryliner.zip
+
+__pycache__/
+*.pyc
