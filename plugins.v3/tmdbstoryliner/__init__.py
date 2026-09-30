@@ -1,4 +1,5 @@
 import json
+import threading
 import time
 from typing import List, Tuple, Dict, Any, Optional
 from pathlib import Path
@@ -23,7 +24,7 @@ class tmdbstoryliner(_PluginBase):
     plugin_icon = "https://raw.githubusercontent.com/leo8912/mp-plugins/main/icons/tmdbstoryliner.png"
     plugin_author = "leo"
     author_url = "https://github.com/leo8912"
-    plugin_version = "3.0.1"
+    plugin_version = "3.0.2"
     plugin_locale = "zh"
     plugin_config_prefix = "tmdbstoryliner_"
     plugin_site = "https://www.themoviedb.org/"
@@ -53,6 +54,8 @@ class tmdbstoryliner(_PluginBase):
         self._ai_translate = False
         self._siliconflow_api_key = ""
         self._siliconflow_model = "Qwen/Qwen2.5-7B-Instruct"
+        # OpenAI兼容渠道 Base URL（留空默认 SiliconFlow）
+        self._ai_base_url = ""
         # 超时配置（秒）
         self._max_runtime = 3600
         # 缓存与历史（实例属性，避免多实例共享）
@@ -60,6 +63,8 @@ class tmdbstoryliner(_PluginBase):
         self._update_history: Dict[str, dict] = {}
         self._start_time: Optional[float] = None
         self._cached_service_infos: Optional[Dict[str, ServiceInfo]] = None
+        # 防止定时/手动触发的任务重入
+        self._run_guard = threading.Lock()
 
     # ------------------------------------------------------------------
     # 配置与生命周期
@@ -84,6 +89,7 @@ class tmdbstoryliner(_PluginBase):
             "ai_translate": self._ai_translate,
             "siliconflow_api_key": self._siliconflow_api_key,
             "siliconflow_model": self._siliconflow_model,
+            "ai_base_url": self._ai_base_url,
             "max_runtime": self._max_runtime,
         }
 
@@ -137,6 +143,7 @@ class tmdbstoryliner(_PluginBase):
             self._ai_translate = config.get("ai_translate", False)
             self._siliconflow_api_key = config.get("siliconflow_api_key") or ""
             self._siliconflow_model = config.get("siliconflow_model") or "Qwen/Qwen2.5-7B-Instruct"
+            self._ai_base_url = (config.get("ai_base_url") or "").strip()
             self._max_runtime = self._parse_max_runtime(config.get("max_runtime", 3600))
 
         # 加载缓存和历史记录
@@ -150,16 +157,31 @@ class tmdbstoryliner(_PluginBase):
             self.update_config(self._config_dict())
 
     def _dispatch_run(self, job_id: str, name: str, delay_seconds: int = 1) -> bool:
-        """将一次性的更新任务交给宿主调度器执行"""
+        """将一次性的更新任务交给宿主调度器执行。
+
+        部分宿主构建的 app.sdk.scheduler 未提供 add_plugin_once_job，
+        此时回退为延迟守护线程执行一次（一次性，不常驻）。
+        """
         if not self._enabled:
             return False
+        add_once = getattr(scheduler_sdk, "add_plugin_once_job", None)
+        if add_once:
+            try:
+                if add_once(self.__class__.__name__, job_id, self.update_storylines, name,
+                            delay_seconds=delay_seconds):
+                    return True
+                logger.warning("调度器未接受一次性任务，回退为线程执行")
+            except Exception as e:
+                logger.error(f"加入一次性任务失败：{e}，回退为线程执行")
+        # 兼容回退：延迟守护线程执行
         try:
-            return scheduler_sdk.add_plugin_once_job(
-                self.__class__.__name__, job_id, self.update_storylines, name,
-                delay_seconds=delay_seconds,
-            )
+            timer = threading.Timer(delay_seconds, self.update_storylines)
+            timer.daemon = True
+            timer.start()
+            logger.info(f"已通过回退线程派发任务：{name}")
+            return True
         except Exception as e:
-            logger.error(f"加入一次性任务失败：{e}")
+            logger.error(f"启动回退线程失败：{e}")
             return False
 
     def get_state(self) -> bool:
@@ -318,8 +340,8 @@ class tmdbstoryliner(_PluginBase):
                                 'props': {'cols': 12, 'md': 6},
                                 'content': [{
                                     'component': 'VTextField',
-                                    'props': {'model': 'siliconflow_api_key', 'label': 'SiliconFlow API密钥',
-                                              'placeholder': '使用AI翻译时必填'},
+                                    'props': {'model': 'siliconflow_api_key', 'label': 'AI翻译 API密钥',
+                                              'placeholder': 'OpenAI兼容渠道Key（SiliconFlow/OpenRouter等），用AI翻译时必填'},
                                 }]
                             },
                         ]
@@ -416,7 +438,16 @@ class tmdbstoryliner(_PluginBase):
                                 'content': [{
                                     'component': 'VTextField',
                                     'props': {'model': 'siliconflow_model', 'label': 'AI模型',
-                                              'placeholder': '如: Qwen/Qwen2.5-7B-Instruct'},
+                                              'placeholder': '如: Qwen/Qwen2.5-7B-Instruct 或 meta-llama/llama-3.3-70b-instruct:free'},
+                                }]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 6},
+                                'content': [{
+                                    'component': 'VTextField',
+                                    'props': {'model': 'ai_base_url', 'label': 'AI API地址（Base URL）',
+                                              'placeholder': '如: https://api.openrouter.ai/v1，留空默认SiliconFlow'},
                                 }]
                             },
                             {
@@ -807,15 +838,22 @@ class tmdbstoryliner(_PluginBase):
         if not self._enabled:
             logger.info("插件已禁用，停止执行")
             return
-        logger.info("开始更新TMDB剧情简介")
-        self._start_time = time.time()
+        # 防止定时/手动/API触发的任务重入
+        if not self._run_guard.acquire(blocking=False):
+            logger.info("已有更新任务在执行，跳过本次触发")
+            return
         try:
-            if self._update_series:
-                self.update_series_storylines()
+            logger.info("开始更新TMDB剧情简介")
+            self._start_time = time.time()
+            try:
+                if self._update_series:
+                    self.update_series_storylines()
+            finally:
+                self._save_cache_and_history()
+                self._start_time = None
+            logger.info("TMDB剧情简介更新完成")
         finally:
-            self._save_cache_and_history()
-            self._start_time = None
-        logger.info("TMDB剧情简介更新完成")
+            self._run_guard.release()
 
     def _check_timeout(self) -> bool:
         """检查任务是否超时"""
@@ -1318,7 +1356,12 @@ class tmdbstoryliner(_PluginBase):
 4. 保持特殊格式不变（如标点符号、换行等）
 5. 仅输出翻译结果，不要添加任何解释或其他内容"""
 
-            url = "https://api.siliconflow.cn/v1/chat/completions"
+            # OpenAI兼容渠道：支持 SiliconFlow / OpenRouter / 任意兼容端点
+            base_url = (self._ai_base_url or "https://api.siliconflow.cn/v1").strip().rstrip("/")
+            if base_url.endswith("/chat/completions"):
+                url = base_url
+            else:
+                url = f"{base_url}/chat/completions"
             headers = {
                 "Authorization": f"Bearer {self._siliconflow_api_key}",
                 "Content-Type": "application/json"

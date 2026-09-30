@@ -220,6 +220,7 @@ def get_service(self) -> list[dict]:
 
 - 服务 ID 稳定且唯一；宿主按 `get_state()` 门控注册——`get_state()` 恒真 = 禁用后任务照跑。
 - 「立即运行一次」/延时一次性任务用 `app.sdk.scheduler.add_plugin_once_job(插件ID, 任务ID, func, 名称, delay_seconds=3)`，不要在 `init_plugin` 里同步跑长任务，也不要自建 BackgroundScheduler；停用时 `remove_plugin_once_job`。
+- **宿主兼容（2026-02 实测）**：部分 V3 构建的 `app.sdk.scheduler` 并没有 `add_plugin_once_job`（报 `has no attribute`，文档示例超前于宿主实现）。必须用 `getattr(scheduler_sdk, "add_plugin_once_job", None)` 探测；缺失、返回 False 或抛错时回退 `threading.Timer(delay, fn)`（`daemon=True`、一次性不常驻），并用非阻塞 `threading.Lock` 防止定时/手动/API 触发的任务重入。
 - 服务/命令/API 返回值即使没有也写 `return []`，不要 `pass`（返回 None）。
 
 通知用基类 `post_message()`；工作流用 `get_actions()`；Agent 工具用 `get_agent_tools()`。
@@ -323,6 +324,7 @@ python -m pytest tests/v3/myplugin
 
 | 症状 | 原因 | 修复 |
 |---|---|---|
+| 日志 `app.sdk.scheduler has no attribute add_plugin_once_job` | 宿主构建未提供该接口（文档超前于实现） | `getattr` 探测 + `threading.Timer(daemon)` 回退 + 防重入锁 |
 | V3 宿主市场看不到插件 | 无 package.v3.json 且 package.json 条目无 `"v3": true` | 建 plugins.v3/ + package.v3.json |
 | 远程命令无反应 | `"event"` 传了字符串，或缺处理器 | 改 EventType 枚举 + `@eventmanager.register` |
 | 禁用后定时任务还跑 | `get_state()` 恒 True | 返回真实 `_enabled` |
