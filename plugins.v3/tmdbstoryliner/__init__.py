@@ -24,7 +24,7 @@ class tmdbstoryliner(_PluginBase):
     plugin_icon = "https://raw.githubusercontent.com/leo8912/mp-plugins/main/icons/tmdbstoryliner.png"
     plugin_author = "leo"
     author_url = "https://github.com/leo8912"
-    plugin_version = "3.0.3"
+    plugin_version = "3.0.4"
     plugin_locale = "zh"
     plugin_config_prefix = "tmdbstoryliner_"
     plugin_site = "https://www.themoviedb.org/"
@@ -1231,6 +1231,11 @@ class tmdbstoryliner(_PluginBase):
                 if append_to_response:
                     params["append_to_response"] = append_to_response
                 response = requests.get(url, params=params, timeout=30)
+                if response.status_code == 404:
+                    # TMDB 不存在该集（本地季集编号与 TMDB 不一致），属永久失败，不重试
+                    logger.info(f"TMDB 无此集 {series_id} S{season_number:02d}E{episode_number:02d}，跳过")
+                    return {'overview': '', 'name': '', '_need_translate': False,
+                            '_not_found': True}
                 response.raise_for_status()
                 result = response.json()
 
@@ -1307,6 +1312,9 @@ class tmdbstoryliner(_PluginBase):
                     "language": "en-US"
                 }
                 response = requests.get(url, params=params, timeout=30)
+                if response.status_code == 404:
+                    return {'overview': '', 'name': '', '_need_translate': False,
+                            '_not_found': True}
                 response.raise_for_status()
                 result = response.json()
                 result['_need_translate'] = True
