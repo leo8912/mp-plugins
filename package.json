@@ -54,7 +54,7 @@
       "v1.0": "初始版本"
     }
   },
-  "tmdbstoryliner": {
+  "TmdbStoryliner": {
     "name": "剧情更新器",
     "description": "定时从TMDB获取剧集和电影的剧情简介，并将英文内容翻译成中文",
     "labels": "媒体库,刮削",

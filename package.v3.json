@@ -31,13 +31,14 @@
     "name": "剧情更新器",
     "description": "定时从TMDB获取剧集的剧情简介，并将英文内容翻译成中文",
     "labels": "媒体库,刮削",
-    "version": "3.0.0",
+    "version": "3.0.1",
     "icon": "https://raw.githubusercontent.com/leo8912/mp-plugins/main/icons/tmdbstoryliner.png",
     "author": "leo",
     "homepage": "https://github.com/leo8912",
     "level": 1,
     "system_version": ">=3.0.0",
     "history": {
+      "v3.0.1": "修复插件ID与索引键不一致导致的“插件不存在或未加载”，类名统一为 tmdbstoryliner 并自动迁移旧配置。",
       "v3.0.0": "迁移至 MoviePilot V3 架构：修复更新任务崩溃、死命令与超时类型错误，合并重复剧集处理路径，导入迁移到 app.sdk。"
     }
   }

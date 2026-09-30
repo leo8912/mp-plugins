@@ -16,14 +16,14 @@ from app.sdk import scheduler as scheduler_sdk
 from app.schemas.types import EventType, NotificationType
 
 
-class TmdbStoryliner(_PluginBase):
+class tmdbstoryliner(_PluginBase):
     # 插件元数据
     plugin_name = "剧情更新器"
     plugin_desc = "定时从TMDB获取剧集的剧情简介，并将英文内容翻译成中文"
     plugin_icon = "https://raw.githubusercontent.com/leo8912/mp-plugins/main/icons/tmdbstoryliner.png"
     plugin_author = "leo"
     author_url = "https://github.com/leo8912"
-    plugin_version = "3.0.0"
+    plugin_version = "3.0.1"
     plugin_locale = "zh"
     plugin_config_prefix = "tmdbstoryliner_"
     plugin_site = "https://www.themoviedb.org/"
@@ -95,9 +95,29 @@ class TmdbStoryliner(_PluginBase):
         except (TypeError, ValueError):
             return 3600
 
+    @staticmethod
+    def _load_legacy_config() -> Optional[dict]:
+        """一次性迁移：读取旧类名 TmdbStoryliner 时期的插件配置键。
+
+        插件 ID 曾为类名 TmdbStoryliner，配置存于 plugin.TmdbStoryliner；
+        类名改为 tmdbstoryliner 后新键为空时回读旧键，避免配置丢失。
+        """
+        try:
+            from app.db.oper.systemconfig import SystemConfigOper
+            legacy = SystemConfigOper().get("plugin.TmdbStoryliner")
+            if legacy:
+                logger.info("已从旧配置键 plugin.TmdbStoryliner 迁移配置")
+                return legacy
+        except Exception as e:
+            logger.warning(f"读取旧配置键失败（如为首次使用可忽略）：{e}")
+        return None
+
     def init_plugin(self, config: Optional[dict] = None):
         """初始化插件（可重复调用）"""
         self.stop_service()
+
+        if not config:
+            config = self._load_legacy_config()
 
         if config:
             self._enabled = bool(config.get("enabled"))
