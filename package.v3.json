@@ -1,0 +1,44 @@
+{
+  "multitrackereditor": {
+    "name": "多下载器tracker替换",
+    "description": "批量替换多下载器的tracker，支持周期性检测",
+    "labels": "下载管理",
+    "version": "3.0.0",
+    "icon": "https://raw.githubusercontent.com/leo8912/mp-plugins/main/icons/multitrackereditor.png",
+    "author": "leo",
+    "homepage": "https://github.com/leo8912",
+    "level": 1,
+    "system_version": ">=3.0.0",
+    "history": {
+      "v3.0.0": "迁移至 MoviePilot V3 架构：修复 get_state 恒真导致禁用失效、修复远程命令未注册、导入迁移到 app.sdk。"
+    }
+  },
+  "varietyshowsubscriber": {
+    "name": "综艺订阅助手",
+    "description": "自动为新添加的综艺订阅添加指定站点",
+    "labels": "订阅",
+    "version": "3.0.0",
+    "icon": "https://raw.githubusercontent.com/leo8912/mp-plugins/main/icons/showsubscriber.png",
+    "author": "leo8912",
+    "homepage": "https://github.com/leo8912",
+    "level": 1,
+    "system_version": ">=3.0.0",
+    "history": {
+      "v3.0.0": "迁移至 MoviePilot V3 架构：宿主数据改经 Oper 访问、导入迁移到 app.sdk、修复空返回与高频日志。"
+    }
+  },
+  "tmdbstoryliner": {
+    "name": "剧情更新器",
+    "description": "定时从TMDB获取剧集的剧情简介，并将英文内容翻译成中文",
+    "labels": "媒体库,刮削",
+    "version": "3.0.0",
+    "icon": "https://raw.githubusercontent.com/leo8912/mp-plugins/main/icons/tmdbstoryliner.png",
+    "author": "leo",
+    "homepage": "https://github.com/leo8912",
+    "level": 1,
+    "system_version": ">=3.0.0",
+    "history": {
+      "v3.0.0": "迁移至 MoviePilot V3 架构：修复更新任务崩溃、死命令与超时类型错误，合并重复剧集处理路径，导入迁移到 app.sdk。"
+    }
+  }
+}
