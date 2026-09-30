@@ -316,7 +316,7 @@ class tmdbstoryliner(_PluginBase):
                                         'label': '翻译服务',
                                         'items': [
                                             {'title': 'Google翻译（免账号）', 'value': 'google'},
-                                            {'title': 'AI翻译（SiliconFlow）', 'value': 'ai'},
+                                            {'title': 'AI翻译（OpenAI兼容渠道）', 'value': 'ai'},
                                         ]
                                     },
                                 }]
