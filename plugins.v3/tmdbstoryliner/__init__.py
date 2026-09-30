@@ -24,7 +24,7 @@ class tmdbstoryliner(_PluginBase):
     plugin_icon = "https://raw.githubusercontent.com/leo8912/mp-plugins/main/icons/tmdbstoryliner.png"
     plugin_author = "leo"
     author_url = "https://github.com/leo8912"
-    plugin_version = "3.0.4"
+    plugin_version = "3.0.5"
     plugin_locale = "zh"
     plugin_config_prefix = "tmdbstoryliner_"
     plugin_site = "https://www.themoviedb.org/"
@@ -56,12 +56,9 @@ class tmdbstoryliner(_PluginBase):
         self._siliconflow_model = "Qwen/Qwen2.5-7B-Instruct"
         # OpenAI兼容渠道 Base URL（留空默认 SiliconFlow）
         self._ai_base_url = ""
-        # 超时配置（秒）
-        self._max_runtime = 3600
         # 缓存与历史（实例属性，避免多实例共享）
         self._series_status_cache: Dict[str, dict] = {}
         self._update_history: Dict[str, dict] = {}
-        self._start_time: Optional[float] = None
         self._cached_service_infos: Optional[Dict[str, ServiceInfo]] = None
         # 防止定时/手动触发的任务重入
         self._run_guard = threading.Lock()
@@ -90,16 +87,7 @@ class tmdbstoryliner(_PluginBase):
             "siliconflow_api_key": self._siliconflow_api_key,
             "siliconflow_model": self._siliconflow_model,
             "ai_base_url": self._ai_base_url,
-            "max_runtime": self._max_runtime,
         }
-
-    def _parse_max_runtime(self, raw) -> int:
-        """表单 VTextField 回传字符串，统一转整数"""
-        try:
-            value = int(raw)
-            return value if value > 0 else 3600
-        except (TypeError, ValueError):
-            return 3600
 
     @staticmethod
     def _load_legacy_config() -> Optional[dict]:
@@ -144,7 +132,6 @@ class tmdbstoryliner(_PluginBase):
             self._siliconflow_api_key = config.get("siliconflow_api_key") or ""
             self._siliconflow_model = config.get("siliconflow_model") or "Qwen/Qwen2.5-7B-Instruct"
             self._ai_base_url = (config.get("ai_base_url") or "").strip()
-            self._max_runtime = self._parse_max_runtime(config.get("max_runtime", 3600))
 
         # 加载缓存和历史记录
         self._load_cache_and_history()
@@ -448,15 +435,6 @@ class tmdbstoryliner(_PluginBase):
                                     'component': 'VTextField',
                                     'props': {'model': 'ai_base_url', 'label': 'AI API地址（Base URL）',
                                               'placeholder': '如: https://api.openrouter.ai/v1，留空默认SiliconFlow'},
-                                }]
-                            },
-                            {
-                                'component': 'VCol',
-                                'props': {'cols': 12, 'md': 6},
-                                'content': [{
-                                    'component': 'VTextField',
-                                    'props': {'model': 'max_runtime', 'label': '最大运行时间(秒)',
-                                              'placeholder': '默认3600秒(1小时)'},
                                 }]
                             },
                         ]
@@ -844,33 +822,19 @@ class tmdbstoryliner(_PluginBase):
             return
         try:
             logger.info("开始更新TMDB剧情简介")
-            self._start_time = time.time()
             try:
                 if self._update_series:
                     self.update_series_storylines()
             finally:
                 self._save_cache_and_history()
-                self._start_time = None
             logger.info("TMDB剧情简介更新完成")
         finally:
             self._run_guard.release()
 
-    def _check_timeout(self) -> bool:
-        """检查任务是否超时"""
-        if self._start_time is None:
-            return False
-        elapsed_time = time.time() - self._start_time
-        if elapsed_time > self._max_runtime:
-            logger.warning(f"任务执行时间已超过最大运行时间 {self._max_runtime} 秒，停止执行")
-            return True
-        return False
-
     def _check_run_conditions(self) -> bool:
-        """检查运行条件：插件是否启用以及是否超时"""
+        """检查运行条件：插件是否启用"""
         if not self._enabled:
             logger.info("插件已禁用，停止执行")
-            return False
-        if self._check_timeout():
             return False
         return True
 
