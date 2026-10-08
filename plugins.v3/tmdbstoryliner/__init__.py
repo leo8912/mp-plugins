@@ -24,7 +24,7 @@ class tmdbstoryliner(_PluginBase):
     plugin_icon = "https://raw.githubusercontent.com/leo8912/mp-plugins/main/icons/tmdbstoryliner.png"
     plugin_author = "leo"
     author_url = "https://github.com/leo8912"
-    plugin_version = "3.0.7"
+    plugin_version = "3.0.8"
     plugin_locale = "zh"
     plugin_config_prefix = "tmdbstoryliner_"
     plugin_site = "https://www.themoviedb.org/"
@@ -509,14 +509,33 @@ class tmdbstoryliner(_PluginBase):
                 'props': {'class': 'text-center'},
             }]
 
-        # 数据按时间降序排列，并转换为 VTable 纯字典行
+        # 数据按时间降序排列
         historys = sorted(historys, key=lambda x: x.get('time') or "", reverse=True)
-        items = [{
-            'time': h.get('time'),
-            'title': h.get('title'),
-            'type': h.get('type'),
-            'status': h.get('status'),
-        } for h in historys]
+
+        # VTable 不认 headers/items 属性，VDataTable 在部分宿主前端未全局注册
+        # （字符串解析失败会渲染成空白）。用 VTable 包装 + 原生表格元素子内容，
+        # 与官方 certmanager 插件同款，原生标签永远可解析。
+        keys = ('time', 'title', 'type', 'status')
+        thead = {
+            'component': 'thead',
+            'content': [{
+                'component': 'tr',
+                'content': [
+                    {'component': 'th', 'props': {'class': 'text-start'}, 'text': label}
+                    for label in ('时间', '标题', '类型', '状态')
+                ],
+            }],
+        }
+        tbody = {
+            'component': 'tbody',
+            'content': [{
+                'component': 'tr',
+                'content': [
+                    {'component': 'td', 'text': row.get(key) or ''}
+                    for key in keys
+                ],
+            } for row in historys],
+        }
 
         return [{
             'component': 'VRow',
@@ -524,20 +543,9 @@ class tmdbstoryliner(_PluginBase):
                 'component': 'VCol',
                 'props': {'cols': 12},
                 'content': [{
-                    # Vuetify 3 的 VTable 不支持 headers/items（会渲染为空表），
-                    # 必须用 VDataTable
-                    'component': 'VDataTable',
-                    'props': {
-                        'headers': [
-                            {'title': '时间', 'key': 'time', 'align': 'start'},
-                            {'title': '标题', 'key': 'title', 'align': 'start'},
-                            {'title': '类型', 'key': 'type', 'align': 'start'},
-                            {'title': '状态', 'key': 'status', 'align': 'start'},
-                        ],
-                        'items': items,
-                        'itemsPerPage': 20,
-                        'class': 'overflow-hidden',
-                    },
+                    'component': 'VTable',
+                    'props': {'hover': True, 'density': 'comfortable'},
+                    'content': [thead, tbody],
                 }]
             }]
         }]
