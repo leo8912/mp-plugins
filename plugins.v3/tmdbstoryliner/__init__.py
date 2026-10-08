@@ -24,7 +24,7 @@ class tmdbstoryliner(_PluginBase):
     plugin_icon = "https://raw.githubusercontent.com/leo8912/mp-plugins/main/icons/tmdbstoryliner.png"
     plugin_author = "leo"
     author_url = "https://github.com/leo8912"
-    plugin_version = "3.0.6"
+    plugin_version = "3.0.7"
     plugin_locale = "zh"
     plugin_config_prefix = "tmdbstoryliner_"
     plugin_site = "https://www.themoviedb.org/"
@@ -45,6 +45,7 @@ class tmdbstoryliner(_PluginBase):
         self._library_paths: List[str] = []
         self._onlyonce = False
         self._test_ai = False
+        self._clear_cache = False
         self._update_episode_image = True
         self._update_episode_rating = True
         self._update_episode_premieredate = True
@@ -80,6 +81,7 @@ class tmdbstoryliner(_PluginBase):
             "library_paths": self._library_paths,
             "onlyonce": False,
             "test_ai": False,
+            "clear_cache": False,
             "update_episode_image": self._update_episode_image,
             "update_episode_rating": self._update_episode_rating,
             "update_episode_premieredate": self._update_episode_premieredate,
@@ -126,6 +128,7 @@ class tmdbstoryliner(_PluginBase):
             self._library_paths = config.get("library_paths") or []
             self._onlyonce = config.get("onlyonce", False)
             self._test_ai = bool(config.get("test_ai", False))
+            self._clear_cache = bool(config.get("clear_cache", False))
             self._update_episode_image = config.get("update_episode_image", True)
             self._update_episode_rating = config.get("update_episode_rating", True)
             self._update_episode_premieredate = config.get("update_episode_premieredate", True)
@@ -150,6 +153,12 @@ class tmdbstoryliner(_PluginBase):
         if self._test_ai:
             self._test_ai = False
             threading.Thread(target=self._run_ai_test, daemon=True).start()
+            self.update_config(self._config_dict())
+
+        # 清除缓存：同步执行（纯内存+本地存储，很快），随后推送结果
+        if self._clear_cache:
+            self._clear_cache = False
+            self._run_clear_cache()
             self.update_config(self._config_dict())
 
     def _dispatch_run(self, job_id: str, name: str, delay_seconds: int = 1) -> bool:
@@ -443,7 +452,7 @@ class tmdbstoryliner(_PluginBase):
                                 'content': [{
                                     'component': 'VTextField',
                                     'props': {'model': 'ai_base_url', 'label': 'AI API地址（Base URL）',
-                                              'placeholder': '如: https://api.openrouter.ai/v1，留空默认SiliconFlow'},
+                                              'placeholder': '如: https://openrouter.ai/api/v1（注意不是api.openrouter.ai），留空默认SiliconFlow'},
                                 }]
                             },
                         ]
@@ -457,6 +466,14 @@ class tmdbstoryliner(_PluginBase):
                                 'content': [{
                                     'component': 'VSwitch',
                                     'props': {'model': 'test_ai', 'label': '测试AI翻译（打开后保存，后台执行一次并推送结果）'},
+                                }]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 6},
+                                'content': [{
+                                    'component': 'VSwitch',
+                                    'props': {'model': 'clear_cache', 'label': '清除缓存与历史（打开后保存执行）'},
                                 }]
                             },
                         ]
@@ -507,9 +524,10 @@ class tmdbstoryliner(_PluginBase):
                 'component': 'VCol',
                 'props': {'cols': 12},
                 'content': [{
-                    'component': 'VTable',
+                    # Vuetify 3 的 VTable 不支持 headers/items（会渲染为空表），
+                    # 必须用 VDataTable
+                    'component': 'VDataTable',
                     'props': {
-                        'hover': True,
                         'headers': [
                             {'title': '时间', 'key': 'time', 'align': 'start'},
                             {'title': '标题', 'key': 'title', 'align': 'start'},
@@ -517,6 +535,7 @@ class tmdbstoryliner(_PluginBase):
                             {'title': '状态', 'key': 'status', 'align': 'start'},
                         ],
                         'items': items,
+                        'itemsPerPage': 20,
                         'class': 'overflow-hidden',
                     },
                 }]
@@ -1464,6 +1483,31 @@ class tmdbstoryliner(_PluginBase):
                               title="【AI翻译测试】", text=text)
         except Exception as e:
             logger.warning(f"推送AI翻译测试结果失败：{e}")
+
+    def _run_clear_cache(self):
+        """清除状态缓存、更新历史与更新记录，结果写日志并推送"""
+        if not self._run_guard.acquire(blocking=False):
+            text = "清除失败：更新任务正在运行，请稍后再试"
+            logger.warning(text)
+        else:
+            try:
+                self._series_status_cache = {}
+                self._update_history = {}
+                self.save_data('series_status_cache', {})
+                self.save_data('update_history', {})
+                self.save_data('history', [])
+                text = "已清除状态缓存、更新历史与更新记录"
+                logger.info(text)
+            except Exception as e:
+                text = f"清除缓存失败：{e}"
+                logger.error(text)
+            finally:
+                self._run_guard.release()
+        try:
+            self.post_message(mtype=NotificationType.Plugin,
+                              title="【清除缓存】", text=text)
+        except Exception as e:
+            logger.warning(f"推送清除缓存结果失败：{e}")
 
     # ------------------------------------------------------------------
     # 缓存与历史

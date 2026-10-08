@@ -171,7 +171,7 @@ HTTP：V3 用 `app.sdk.network.AsyncRequestUtils`（底层 HTTPX2）。默认网
 ## 6. 页面与表单
 
 - `get_form()` 返回 `(页面JSON, 默认模型)`；`props.model` 对应模型字段。
-- `get_page()` 返回详情页 JSON；数据表用 `VTable` 时要么传 `headers + items(纯 dict 行)`，要么用 `thead/tbody + tr/td` 组件——**不要把组件 JSON 塞进 `items`**（渲染为空行）。
+- `get_page()` 返回详情页 JSON；数据表**必须用 `VDataTable`**（`headers + items(纯 dict 行)`）——Vuetify 3 的 `VTable` 只是 `<table>` 样式包装，**不认 `headers`/`items`，会渲染成空表**（2026-02 对照前端 origin/v3 与宿主页面实测）。也不要把组件 JSON 塞进 `items`。备选：`thead/tbody + tr/td` 组件。
 - 复杂交互/侧栏全页用 Vue 联邦：`get_render_mode() -> ("vue", "dist/assets")`；联邦产物不得打包 Vuetify/MDI 全局 CSS（门禁脚本 `check_federation_css.py`）。
 - `get_form`/`get_page` 会被频繁调用：里面不要做重网络请求、不要刷 info 日志。
 
@@ -330,7 +330,7 @@ python -m pytest tests/v3/myplugin
 | 远程命令无反应 | `"event"` 传了字符串，或缺处理器 | 改 EventType 枚举 + `@eventmanager.register` |
 | 禁用后定时任务还跑 | `get_state()` 恒 True | 返回真实 `_enabled` |
 | 配置页数值比较报 TypeError | VTextField 回传字符串 | `int(config.get(...))` |
-| 详情页表格空白 | 组件 JSON 塞进 VTable `items` | 改 headers+纯 dict 或 thead/tbody |
+| 详情页表格空白 | Vuetify 3 的 `VTable` 不支持 `headers`/`items`；或组件 JSON 塞进 items | 改用 `VDataTable` + headers + 纯 dict items |
 | DEBUG 有兼容导入警告 | 旧路径导入 | 按警告末尾推荐路径迁到 app.sdk |
 | 装完插件 ImportError | 缺依赖未声明 | 插件目录 pyproject.toml 声明 |
 | 更新历史/缓存读不到 | JSON 序列化 int 键变 str | 读取时统一 str(key) 或存 str |
