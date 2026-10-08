@@ -24,7 +24,7 @@ class tmdbstoryliner(_PluginBase):
     plugin_icon = "https://raw.githubusercontent.com/leo8912/mp-plugins/main/icons/tmdbstoryliner.png"
     plugin_author = "leo"
     author_url = "https://github.com/leo8912"
-    plugin_version = "3.0.5"
+    plugin_version = "3.0.6"
     plugin_locale = "zh"
     plugin_config_prefix = "tmdbstoryliner_"
     plugin_site = "https://www.themoviedb.org/"
@@ -44,6 +44,7 @@ class tmdbstoryliner(_PluginBase):
         self._update_series = True
         self._library_paths: List[str] = []
         self._onlyonce = False
+        self._test_ai = False
         self._update_episode_image = True
         self._update_episode_rating = True
         self._update_episode_premieredate = True
@@ -78,6 +79,7 @@ class tmdbstoryliner(_PluginBase):
             "update_series": self._update_series,
             "library_paths": self._library_paths,
             "onlyonce": False,
+            "test_ai": False,
             "update_episode_image": self._update_episode_image,
             "update_episode_rating": self._update_episode_rating,
             "update_episode_premieredate": self._update_episode_premieredate,
@@ -123,6 +125,7 @@ class tmdbstoryliner(_PluginBase):
             self._update_series = config.get("update_series", True)
             self._library_paths = config.get("library_paths") or []
             self._onlyonce = config.get("onlyonce", False)
+            self._test_ai = bool(config.get("test_ai", False))
             self._update_episode_image = config.get("update_episode_image", True)
             self._update_episode_rating = config.get("update_episode_rating", True)
             self._update_episode_premieredate = config.get("update_episode_premieredate", True)
@@ -141,6 +144,12 @@ class tmdbstoryliner(_PluginBase):
             logger.info("立即运行一次剧情简介更新任务")
             self._onlyonce = False
             self._dispatch_run("onlyonce_run", "剧情更新器立即运行", delay_seconds=3)
+            self.update_config(self._config_dict())
+
+        # AI翻译测试：后台执行一次并推送结果，不阻塞初始化
+        if self._test_ai:
+            self._test_ai = False
+            threading.Thread(target=self._run_ai_test, daemon=True).start()
             self.update_config(self._config_dict())
 
     def _dispatch_run(self, job_id: str, name: str, delay_seconds: int = 1) -> bool:
@@ -435,6 +444,19 @@ class tmdbstoryliner(_PluginBase):
                                     'component': 'VTextField',
                                     'props': {'model': 'ai_base_url', 'label': 'AI API地址（Base URL）',
                                               'placeholder': '如: https://api.openrouter.ai/v1，留空默认SiliconFlow'},
+                                }]
+                            },
+                        ]
+                    },
+                    {
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 6},
+                                'content': [{
+                                    'component': 'VSwitch',
+                                    'props': {'model': 'test_ai', 'label': '测试AI翻译（打开后保存，后台执行一次并推送结果）'},
                                 }]
                             },
                         ]
@@ -1085,7 +1107,8 @@ class tmdbstoryliner(_PluginBase):
         # 5. 保存
         if self.set_iteminfo(server_name, server_type, item_id, iteminfo):
             logger.info(f"已更新 {episode_label} 标题和剧情简介")
-            self._update_history_record(tmdb_id, season_number, episode_number, "updated")
+            self._update_history_record(tmdb_id, season_number, episode_number, "updated",
+                                        translated_name=translated_name)
 
             if self._enable_notify:
                 self.post_message(
@@ -1148,13 +1171,18 @@ class tmdbstoryliner(_PluginBase):
 
         if overview and (need_translate or not self._is_chinese(overview)):
             logger.info(f"{episode_label} 剧情简介需要翻译: {overview[:50]}...")
-            translated_overview = self._combine_translation_with_original(
-                translator(overview), overview, False)
+            translated = translator(overview)
+            # 翻译失败（返回原文）时不拼原文标记，保持可重试
+            if translated != overview:
+                translated_overview = self._combine_translation_with_original(
+                    translated, overview, False)
 
         if name and (need_translate or not self._is_chinese(name)):
             logger.info(f"{episode_label} 标题需要翻译: {name}")
-            translated_name = self._combine_translation_with_original(
-                translator(name), name, True)
+            translated = translator(name)
+            if translated != name:
+                translated_name = self._combine_translation_with_original(
+                    translated, name, True)
 
         return translated_overview, translated_name
 
@@ -1341,8 +1369,11 @@ class tmdbstoryliner(_PluginBase):
             return text
 
     def ai_translate_text(self, text: str, source_lang: str = "en", target_lang: str = "zh") -> str:
-        """使用SiliconFlow AI翻译文本"""
-        if not text or not self._siliconflow_api_key:
+        """使用OpenAI兼容渠道AI翻译文本"""
+        if not text:
+            return text
+        if not self._siliconflow_api_key:
+            logger.warning("AI翻译未配置API密钥，跳过翻译")
             return text
 
         try:
@@ -1387,6 +1418,53 @@ class tmdbstoryliner(_PluginBase):
             logger.error(f"AI翻译失败：{e}")
             return text
 
+    def _run_ai_test(self):
+        """测试AI翻译渠道连通性，结果同时写日志并推送通知"""
+        logger.info("开始测试AI翻译渠道")
+        base_url = (self._ai_base_url or "https://api.siliconflow.cn/v1").strip().rstrip("/")
+        if not self._siliconflow_api_key:
+            text = "AI翻译测试失败：未配置 AI翻译 API密钥"
+            logger.warning(text)
+        else:
+            if base_url.endswith("/chat/completions"):
+                url = base_url
+            else:
+                url = f"{base_url}/chat/completions"
+            try:
+                response = requests.post(
+                    url,
+                    headers={
+                        "Authorization": f"Bearer {self._siliconflow_api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": self._siliconflow_model,
+                        "messages": [{"role": "user",
+                                      "content": "请将这句话翻译成中文，只输出译文：The curious cat jumped over the lazy dog."}],
+                        "temperature": 0.3,
+                        "max_tokens": 200,
+                    },
+                    timeout=30,
+                )
+                response.raise_for_status()
+                result = response.json()
+                if result.get("choices"):
+                    reply = (result["choices"][0].get("message", {}).get("content") or "").strip()
+                    text = (f"AI翻译测试成功！模型 {self._siliconflow_model} @ {base_url}\n"
+                            f"返回：{reply[:200]}")
+                    logger.info(text)
+                else:
+                    text = f"AI翻译测试失败：返回内容异常 {str(result)[:200]}"
+                    logger.warning(text)
+            except Exception as e:
+                text = f"AI翻译测试失败：{e}"
+                logger.warning(text)
+        try:
+            self.post_message(mtype=NotificationType.Plugin,
+                              title="【AI翻译测试】", text=text)
+        except Exception as e:
+            logger.warning(f"推送AI翻译测试结果失败：{e}")
+
     # ------------------------------------------------------------------
     # 缓存与历史
     # ------------------------------------------------------------------
@@ -1412,7 +1490,8 @@ class tmdbstoryliner(_PluginBase):
             logger.error(f"保存缓存和历史记录失败: {e}")
 
     def _update_history_record(self, series_id: int, season_number: int,
-                               episode_number: int, status: str):
+                               episode_number: int, status: str,
+                               translated_name: Optional[str] = None):
         """更新剧集的历史记录（不立即落库，由任务结束时统一保存）"""
         episode_key = f"{series_id}_S{season_number:02d}E{episode_number:02d}"
         current_time = time.time()
@@ -1427,6 +1506,9 @@ class tmdbstoryliner(_PluginBase):
 
         episode_history['last_update'] = current_time
         episode_history['last_status'] = status
+        if status == "updated" and translated_name:
+            # 记录本次写入的标题译名，供跳过判定避免反复重译
+            episode_history['translated_name'] = translated_name
 
         if status == "updated":
             episode_history['update_count'] += 1
@@ -1505,25 +1587,46 @@ class tmdbstoryliner(_PluginBase):
             logger.debug(f"TMDB未提供任何信息，跳过更新 {episode_key}")
             return True
 
-        # 2. 本地已包含原文且与TMDB一致
-        if self._contains_original_and_matches(existing_overview, tmdb_overview) and \
-           self._contains_original_and_matches(existing_name, tmdb_name):
-            logger.debug(f"剧集 {episode_key} 本地内容已包含原文且与TMDB一致，跳过更新")
+        history = self._update_history.get(episode_key) or {}
+        translated_name = history.get('translated_name') or ''
+
+        def _translation_pending(tmdb_text: str) -> bool:
+            """TMDB原文非中文且配置了翻译服务时，说明翻译尚未完成"""
+            if not tmdb_text or self._is_chinese(tmdb_text):
+                return False
+            return self._translate_service in ('google', 'ai')
+
+        def _overview_settled() -> bool:
+            # 已带原文标记且原文与TMDB一致：翻译已落定
+            if self._contains_original_and_matches(existing_overview, tmdb_overview):
+                return True
+            # 与TMDB完全一致：中文则已同步；英文则只有在无翻译服务时才算完成
+            if existing_overview == tmdb_overview:
+                return not _translation_pending(tmdb_overview)
+            return False
+
+        def _name_settled() -> bool:
+            # 与上次写入的译名一致
+            if translated_name and existing_name == translated_name:
+                return True
+            if self._contains_original_and_matches(existing_name, tmdb_name):
+                return True
+            if existing_name == tmdb_name:
+                return not _translation_pending(tmdb_name)
+            return False
+
+        # 2. 两侧都已同步（含翻译落定）：跳过
+        if (tmdb_overview or tmdb_name) and _overview_settled() and _name_settled():
+            logger.debug(f"剧集 {episode_key} 内容已同步（含翻译），跳过更新")
             return True
 
-        # 3. 本地内容与TMDB内容完全一致
-        if existing_overview == tmdb_overview and existing_name == tmdb_name and \
-                (tmdb_overview or tmdb_name):
-            logger.debug(f"剧集 {episode_key} 现有内容和TMDB内容完全一致，跳过更新")
-            return True
-
-        # 4. 本地为空而TMDB有内容：需要更新
+        # 3. 本地为空而TMDB有内容：需要更新
         if not existing_overview and tmdb_overview:
             return False
         if not existing_name and tmdb_name:
             return False
 
-        # 5. 按更新间隔跳过（已完结剧集7天，连载剧集1天）
+        # 4. 按更新间隔跳过（已完结剧集7天，连载剧集1天）
         if episode_key in self._update_history:
             episode_history = self._update_history[episode_key]
             last_update_time = episode_history.get('last_update', 0)
