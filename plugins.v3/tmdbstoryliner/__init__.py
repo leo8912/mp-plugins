@@ -24,7 +24,7 @@ class tmdbstoryliner(_PluginBase):
     plugin_icon = "https://raw.githubusercontent.com/leo8912/mp-plugins/main/icons/tmdbstoryliner.png"
     plugin_author = "leo"
     author_url = "https://github.com/leo8912"
-    plugin_version = "3.0.9"
+    plugin_version = "3.1.0"
     plugin_locale = "zh"
     plugin_config_prefix = "tmdbstoryliner_"
     plugin_site = "https://www.themoviedb.org/"
@@ -58,6 +58,11 @@ class tmdbstoryliner(_PluginBase):
         self._siliconflow_model = "Qwen/Qwen2.5-7B-Instruct"
         # OpenAI兼容渠道 Base URL（留空默认 SiliconFlow）
         self._ai_base_url = ""
+        # AI多渠道负载均衡（每行 base_url|api_key|model）
+        self._ai_channels_text = ""
+        self._ai_channels: List[dict] = []
+        self._channel_rr = 0
+        self._cooldown_channels: set = set()
         # 缓存与历史（实例属性，避免多实例共享）
         self._series_status_cache: Dict[str, dict] = {}
         self._update_history: Dict[str, dict] = {}
@@ -88,9 +93,11 @@ class tmdbstoryliner(_PluginBase):
             "update_episode_credits": self._update_episode_credits,
             "enable_notify": self._enable_notify,
             "ai_translate": self._ai_translate,
-            "siliconflow_api_key": self._siliconflow_api_key,
-            "siliconflow_model": self._siliconflow_model,
-            "ai_base_url": self._ai_base_url,
+            "ai_channels": self._ai_channels_text,
+            # 旧单渠道字段镜像第一渠道，保持旧版配置可读
+            "siliconflow_api_key": self._ai_channels[0]["api_key"] if self._ai_channels else "",
+            "siliconflow_model": (self._ai_channels[0]["model"] or "Qwen/Qwen2.5-7B-Instruct") if self._ai_channels else "",
+            "ai_base_url": self._ai_channels[0]["base_url"] if self._ai_channels else "",
         }
 
     @staticmethod
@@ -138,6 +145,10 @@ class tmdbstoryliner(_PluginBase):
             self._siliconflow_api_key = config.get("siliconflow_api_key") or ""
             self._siliconflow_model = config.get("siliconflow_model") or "Qwen/Qwen2.5-7B-Instruct"
             self._ai_base_url = (config.get("ai_base_url") or "").strip()
+            self._ai_channels_text = config.get("ai_channels") or ""
+            self._ai_channels = self._parse_ai_channels()
+            self._channel_rr = 0
+            self._cooldown_channels = set()
 
         # 加载缓存和历史记录
         self._load_cache_and_history()
@@ -439,11 +450,32 @@ class tmdbstoryliner(_PluginBase):
                         'content': [
                             {
                                 'component': 'VCol',
+                                'props': {'cols': 12},
+                                'content': [{
+                                    'component': 'VTextarea',
+                                    'props': {
+                                        'model': 'ai_channels',
+                                        'label': 'AI多渠道负载均衡（每行一个：base_url|api_key|model，model可省略）',
+                                        'placeholder': 'https://api.groq.com/openai/v1|gsk_xxx|llama-3.3-70b-versatile\n'
+                                                       'https://api.cerebras.ai/v1|csk-xxx\n'
+                                                       'https://generativelanguage.googleapis.com/v1beta/openai|AIza-xxx|gemini-2.0-flash\n'
+                                                       '填写后逐次调用轮询分摊、限流渠道本任务内自动冷却；留空则使用下方单渠道配置',
+                                        'rows': 4,
+                                    },
+                                }]
+                            },
+                        ]
+                    },
+                    {
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
                                 'props': {'cols': 12, 'md': 6},
                                 'content': [{
                                     'component': 'VTextField',
-                                    'props': {'model': 'siliconflow_model', 'label': 'AI模型',
-                                              'placeholder': '如: Qwen/Qwen2.5-7B-Instruct 或 meta-llama/llama-3.3-70b-instruct:free'},
+                                    'props': {'model': 'siliconflow_model', 'label': 'AI模型（单渠道）',
+                                              'placeholder': '如: Qwen/Qwen2.5-7B-Instruct'},
                                 }]
                             },
                             {
@@ -451,8 +483,8 @@ class tmdbstoryliner(_PluginBase):
                                 'props': {'cols': 12, 'md': 6},
                                 'content': [{
                                     'component': 'VTextField',
-                                    'props': {'model': 'ai_base_url', 'label': 'AI API地址（Base URL）',
-                                              'placeholder': '如: https://openrouter.ai/api/v1（注意不是api.openrouter.ai），留空默认SiliconFlow'},
+                                    'props': {'model': 'ai_base_url', 'label': 'AI API地址（单渠道，留空默认SiliconFlow）',
+                                              'placeholder': '如: https://openrouter.ai/api/v1'},
                                 }]
                             },
                         ]
@@ -739,7 +771,12 @@ class tmdbstoryliner(_PluginBase):
         def __set_plex_iteminfo():
             try:
                 plexitem = service.instance.get_plex().library.fetchItem(ekey=itemid)
-                plexitem.editSummary(iteminfo['Overview']).reload()
+                # Plex 需分别写简介与标题（editSummary 只改简介）
+                if iteminfo.get('Overview'):
+                    plexitem.editSummary(iteminfo['Overview'])
+                if iteminfo.get('Name'):
+                    plexitem.editTitle(iteminfo['Name'])
+                plexitem.reload()
                 return True
             except Exception as err:
                 logger.error(f"更新Plex媒体项详情失败：{str(err)}")
@@ -871,6 +908,8 @@ class tmdbstoryliner(_PluginBase):
             return
         try:
             logger.info("开始更新TMDB剧情简介")
+            # 每轮任务重置渠道冷却，重新参与负载均衡
+            self._cooldown_channels = set()
             try:
                 if self._update_series:
                     self.update_series_storylines()
@@ -1071,34 +1110,59 @@ class tmdbstoryliner(_PluginBase):
         use_extended = (self._update_episode_image or self._update_episode_rating
                         or self._update_episode_premieredate or self._update_episode_credits)
 
+        stats: Dict[str, int] = {}
         for season_number, episode_number in sorted(work_keys):
             if not self._check_run_conditions():
                 return
             key = f"S{season_number:02d}E{episode_number:02d}"
             item_id = (episode_items.get(key) or {}).get('Id')
             try:
-                self._update_one_episode(server_name, server_info.type, series, tmdb_id,
-                                         season_number, episode_number, item_id, use_extended)
+                result = self._update_one_episode(server_name, server_info.type, series, tmdb_id,
+                                                  season_number, episode_number, item_id, use_extended)
             except Exception as e:
                 logger.error(f"更新 {series.title} S{season_number:02d}E{episode_number:02d} 出错，跳过该集：{e}")
                 self._update_history_record(tmdb_id, season_number, episode_number, "failed")
+                result = "failed"
+            stats[result] = stats.get(result, 0) + 1
+
+        # 按剧汇总推送（替代逐集推送，避免大库首轮刷屏）
+        updated = stats.get("updated", 0) + stats.get("updated_translated", 0)
+        if self._enable_notify and (updated or stats.get("failed", 0)):
+            parts = []
+            if updated:
+                parts.append(f"更新 {updated} 集")
+            translated = stats.get("updated_translated", 0)
+            if translated:
+                parts.append(f"翻译 {translated} 集")
+            if stats.get("failed", 0):
+                parts.append(f"失败 {stats['failed']} 集")
+            if stats.get("skipped", 0):
+                parts.append(f"跳过 {stats['skipped']} 集")
+            try:
+                self.post_message(
+                    mtype=NotificationType.Plugin,
+                    title="【剧情信息更新啦】🎉",
+                    text=f"📺 {series.title}：{'，'.join(parts)}"
+                )
+            except Exception as e:
+                logger.warning(f"推送 {series.title} 汇总通知失败：{e}")
 
     def _update_one_episode(self, server_name: str, server_type: str, series,
                             tmdb_id: int, season_number: int, episode_number: int,
-                            item_id: Optional[str], use_extended: bool) -> None:
-        """更新单集的标题与剧情简介（所有路径共用的唯一实现）"""
+                            item_id: Optional[str], use_extended: bool) -> str:
+        """更新单集的标题与剧情简介。返回状态：updated/updated_translated/skipped/failed。"""
         episode_label = f"{series.title} S{season_number:02d}E{episode_number:02d}"
 
         if not item_id:
             logger.warning(f"缺少媒体服务器剧集ID，跳过 {episode_label}")
             self.save_update_history(episode_label, "电视剧剧集", "失败(缺少剧集ID)")
-            return
+            return "failed"
 
         # 1. 获取TMDB剧集详情（带重试）
         episode_details = None
         for i in range(5):
             if not self._check_run_conditions():
-                return
+                return "skipped"
             episode_details = self.get_tmdb_episode_details(
                 tmdb_id, season_number, episode_number, extended=use_extended)
             if episode_details:
@@ -1109,7 +1173,7 @@ class tmdbstoryliner(_PluginBase):
         if not episode_details:
             logger.warning(f"无法获取 {episode_label} 的TMDB信息")
             self.save_update_history(episode_label, "电视剧剧集", "失败(无TMDB信息)")
-            return
+            return "failed"
 
         overview = episode_details.get('overview', '').strip()
         name = episode_details.get('name', '').strip()
@@ -1118,64 +1182,72 @@ class tmdbstoryliner(_PluginBase):
         if not overview and not name:
             logger.debug(f"{episode_label} 没有剧情简介和标题")
             self._update_history_record(tmdb_id, season_number, episode_number, "skipped")
-            return
+            return "skipped"
 
         # 2. 获取媒体服务器中的现有信息并判断是否跳过
         iteminfo = self.get_iteminfo(server_name, server_type, item_id)
         if not iteminfo:
             logger.error(f"获取 {episode_label} 详情失败")
             self._update_history_record(tmdb_id, season_number, episode_number, "failed")
-            return
+            return "failed"
 
         if self._should_skip_episode(iteminfo, episode_details, tmdb_id,
                                      season_number, episode_number):
             logger.info(f"跳过更新 {episode_label} - 内容一致或未到更新时间")
             self._update_history_record(tmdb_id, season_number, episode_number, "skipped")
             self.save_update_history(episode_label, "电视剧剧集", "已跳过")
-            return
+            return "skipped"
 
         # 3. 翻译
         translated_overview, translated_name = self._translate_fields(
             overview, name, need_translate, episode_label)
 
-        # 4. 更新字段
+        # 4. 更新字段（翻译失败时保护现有中文，不用英文覆盖）
+        existing_overview = (iteminfo.get('Overview') or '').strip()
+        existing_name = (iteminfo.get('Name') or '').strip()
+        overview_protected = name_protected = False
         if overview:
-            iteminfo['Overview'] = translated_overview
+            if (translated_overview == overview and not self._is_chinese(overview)
+                    and self._is_chinese(existing_overview)):
+                logger.info(f"{episode_label} 翻译失败，保留现有中文简介")
+                overview_protected = True
+            else:
+                iteminfo['Overview'] = translated_overview
         if name:
-            iteminfo['Name'] = translated_name
+            if (translated_name == name and not self._is_chinese(name)
+                    and self._is_chinese(existing_name)):
+                logger.info(f"{episode_label} 翻译失败，保留现有中文标题")
+                name_protected = True
+            else:
+                iteminfo['Name'] = translated_name
 
         if use_extended:
             self._apply_extended_fields(iteminfo, episode_details, episode_label)
 
-        # 5. 保存
+        # 5. 保存（逐集推送已移除，由 _process_series 按剧汇总）
         if self.set_iteminfo(server_name, server_type, item_id, iteminfo):
             logger.info(f"已更新 {episode_label} 标题和剧情简介")
             self._update_history_record(tmdb_id, season_number, episode_number, "updated",
                                         translated_name=translated_name)
-
-            if self._enable_notify:
-                try:
-                    self.post_message(
-                        mtype=NotificationType.Plugin,
-                        title="【剧情信息更新啦】🎉",
-                        text=f"📺 剧集 {episode_label} 已更新\n"
-                             f"标题：{translated_name}\n"
-                             f"剧情简介：{translated_overview[:100]}"
-                             f"{'...' if len(translated_overview) > 100 else ''}"
-                    )
-                except Exception as e:
-                    logger.warning(f"推送 {episode_label} 更新通知失败：{e}")
+            has_translation = (translated_overview != overview) or (translated_name != name)
+            if overview_protected or name_protected:
+                status = "翻译失败(保留原文中文)"
+            elif has_translation:
+                status = "已翻译并更新"
+            else:
+                status = "已更新原始内容"
+            result = "updated_translated" if has_translation else "updated"
         else:
             logger.error(f"更新 {episode_label} 标题和剧情简介失败")
             self._update_history_record(tmdb_id, season_number, episode_number, "failed")
+            status = "失败(写入媒体服务器)"
+            result = "failed"
 
         try:
-            has_translation = (translated_overview != overview) or (translated_name != name)
-            self.save_update_history(
-                episode_label, "电视剧剧集",
-                "已翻译并更新" if has_translation else "已更新原始内容")
+            self.save_update_history(episode_label, "电视剧剧集", status)
         except Exception as e:
             logger.warning(f"记录 {episode_label} 更新历史失败：{e}")
+        return result
 
     def _apply_extended_fields(self, iteminfo: dict, episode_details: dict,
                                episode_label: str) -> None:
@@ -1206,21 +1278,17 @@ class tmdbstoryliner(_PluginBase):
 
     def _translate_fields(self, overview: str, name: str, need_translate: bool,
                           episode_label: str) -> Tuple[str, str]:
-        """按配置的翻译服务处理简介与标题"""
+        """按配置的翻译服务处理简介与标题（AI失败自动降级免费池）"""
         translated_overview = overview
         translated_name = name
 
-        if self._translate_service == "google":
-            translator = self.translate_text
-        elif self._translate_service == "ai":
-            translator = self.ai_translate_text
-        else:
+        if self._translate_service not in ("google", "ai"):
             logger.debug(f"{episode_label} 未配置翻译服务，跳过翻译")
             return translated_overview, translated_name
 
         if overview and (need_translate or not self._is_chinese(overview)):
             logger.info(f"{episode_label} 剧情简介需要翻译: {overview[:50]}...")
-            translated = translator(overview)
+            translated = self.translate_text(overview)
             # 翻译失败（返回原文）时不拼原文标记，保持可重试
             if translated != overview:
                 translated_overview = self._combine_translation_with_original(
@@ -1228,7 +1296,7 @@ class tmdbstoryliner(_PluginBase):
 
         if name and (need_translate or not self._is_chinese(name)):
             logger.info(f"{episode_label} 标题需要翻译: {name}")
-            translated = translator(name)
+            translated = self.translate_text(name)
             if translated != name:
                 translated_name = self._combine_translation_with_original(
                     translated, name, True)
@@ -1373,18 +1441,61 @@ class tmdbstoryliner(_PluginBase):
     # ------------------------------------------------------------------
     # 翻译
     # ------------------------------------------------------------------
+    def _parse_ai_channels(self) -> List[dict]:
+        """解析多行AI渠道配置（每行 base_url|api_key|model）。
+
+        多行配置为空时回退旧单渠道字段，实现零迁移。
+        """
+        channels: List[dict] = []
+        for line in (self._ai_channels_text or "").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = [p.strip() for p in line.split("|")]
+            if len(parts) < 2 or not parts[0] or not parts[1]:
+                logger.warning(f"AI渠道行格式无效（base_url|api_key|model），跳过：{line[:50]}")
+                continue
+            channels.append({
+                "base_url": parts[0].rstrip("/"),
+                "api_key": parts[1],
+                "model": parts[2] if len(parts) > 2 and parts[2] else "Qwen/Qwen2.5-7B-Instruct",
+            })
+        if not channels and self._siliconflow_api_key:
+            channels.append({
+                "base_url": (self._ai_base_url or "https://api.siliconflow.cn/v1").rstrip("/"),
+                "api_key": self._siliconflow_api_key,
+                "model": self._siliconflow_model or "Qwen/Qwen2.5-7B-Instruct",
+            })
+        return channels
+
     def translate_text(self, text: str, source_lang: str = "en", target_lang: str = "zh") -> str:
-        """使用配置的翻译服务翻译文本"""
+        """按服务配置翻译：AI走渠道池（失败降级免费池），Google直接走免费池。"""
         if not text or source_lang == target_lang:
             return text
         try:
+            if self._translate_service == "ai":
+                translated = self.ai_translate_text(text, source_lang, target_lang)
+                if translated != text:
+                    return translated
+                logger.warning("AI渠道全部失败，降级到免费翻译")
+                return self._free_translate(text, source_lang, target_lang)
             if self._translate_service == "google":
-                return self._google_translate(text, source_lang, target_lang)
+                return self._free_translate(text, source_lang, target_lang)
             logger.warning(f"不支持的翻译服务：{self._translate_service}")
             return text
         except Exception as e:
             logger.error(f"翻译失败：{e}")
             return text
+
+    def _free_translate(self, text: str, source_lang: str, target_lang: str) -> str:
+        """免费引擎池：Google gtx → MyMemory，校验通过即返回。"""
+        result = self._google_translate(text, source_lang, target_lang)
+        if result != text and self._is_plausible_translation(text, result):
+            return result
+        result = self._mymemory_translate(text, source_lang, target_lang)
+        if result != text and self._is_plausible_translation(text, result):
+            return result
+        return text
 
     def _google_translate(self, text: str, source_lang: str, target_lang: str) -> str:
         """Google翻译（免账号）"""
@@ -1417,14 +1528,57 @@ class tmdbstoryliner(_PluginBase):
             logger.error(f"Google翻译失败：{e}")
             return text
 
-    def ai_translate_text(self, text: str, source_lang: str = "en", target_lang: str = "zh") -> str:
-        """使用OpenAI兼容渠道AI翻译文本（带重试与结果校验）"""
-        if not text:
+    def _mymemory_translate(self, text: str, source_lang: str, target_lang: str) -> str:
+        """MyMemory 免费翻译（兜底；免费额度约5000字符/天）"""
+        try:
+            # MyMemory 中文代码为 zh-CN
+            pair_target = "zh-CN" if target_lang == "zh" else target_lang
+            response = requests.get(
+                "https://api.mymemory.translated.net/get",
+                params={"q": text, "langpair": f"{source_lang}|{pair_target}"},
+                timeout=15,
+            )
+            response.raise_for_status()
+            result = response.json()
+            translated = ((result.get("responseData") or {}).get("translatedText") or "").strip()
+            if result.get("responseStatus") == 200 and translated:
+                return translated
+            logger.warning(f"MyMemory翻译返回异常：{result.get('responseDetails')}")
             return text
-        if not self._siliconflow_api_key:
-            logger.warning("AI翻译未配置API密钥，跳过翻译")
+        except Exception as e:
+            logger.error(f"MyMemory翻译失败：{e}")
             return text
 
+    def ai_translate_text(self, text: str, source_lang: str = "en", target_lang: str = "zh") -> str:
+        """AI渠道池翻译：逐次轮询分摊负载；限流渠道本任务内冷却。全失败返回原文。"""
+        if not text:
+            return text
+        channels = self._ai_channels
+        if not channels:
+            logger.warning("AI翻译未配置任何渠道")
+            return text
+        total = len(channels)
+        start = self._channel_rr % total
+        for i in range(total):
+            idx = (start + i) % total
+            if idx in self._cooldown_channels:
+                continue
+            channel = channels[idx]
+            translated, rate_limited = self._call_ai_channel(
+                channel, text, source_lang, target_lang)
+            # 无论成败，下次调用从下一渠道开始，实现负载分摊
+            self._channel_rr = (idx + 1) % total
+            if translated is not None:
+                return translated
+            if rate_limited:
+                logger.warning(f"AI渠道{idx + 1}（{channel['base_url']}）限流，本任务内冷却")
+                self._cooldown_channels.add(idx)
+        logger.error("所有AI渠道均失败，返回原文")
+        return text
+
+    def _call_ai_channel(self, channel: dict, text: str,
+                         source_lang: str, target_lang: str):
+        """调用单个AI渠道。返回 (译文或None, 是否限流)。"""
         prompt = f"""你是一位专业的影视翻译人员，请将以下{source_lang}影视内容翻译成{target_lang}：
 
 {text}
@@ -1436,18 +1590,14 @@ class tmdbstoryliner(_PluginBase):
 4. 保持特殊格式不变（如标点符号、换行等）
 5. 仅输出翻译结果，不要添加任何解释或其他内容"""
 
-        # OpenAI兼容渠道：支持 SiliconFlow / OpenRouter / 任意兼容端点
-        base_url = (self._ai_base_url or "https://api.siliconflow.cn/v1").strip().rstrip("/")
-        if base_url.endswith("/chat/completions"):
-            url = base_url
-        else:
-            url = f"{base_url}/chat/completions"
+        base_url = channel["base_url"]
+        url = base_url if base_url.endswith("/chat/completions") else f"{base_url}/chat/completions"
         headers = {
-            "Authorization": f"Bearer {self._siliconflow_api_key}",
+            "Authorization": f"Bearer {channel['api_key']}",
             "Content-Type": "application/json"
         }
         data = {
-            "model": self._siliconflow_model,
+            "model": channel["model"],
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.3,
             "max_tokens": 4096
@@ -1456,29 +1606,31 @@ class tmdbstoryliner(_PluginBase):
         for attempt in range(3):
             try:
                 response = requests.post(url, headers=headers, json=data, timeout=120)
+                # 429/配额类错误：换渠道比重试更有效
+                if response.status_code == 429 or (
+                        response.status_code == 403
+                        and any(k in response.text.lower() for k in ("quota", "rate", "limit"))):
+                    return None, True
                 response.raise_for_status()
                 result = response.json()
 
                 if "choices" not in result or not result["choices"]:
-                    logger.error(f"AI翻译返回错误：{result}")
+                    logger.error(f"AI渠道返回错误：{str(result)[:200]}")
                 else:
                     translated_text = result["choices"][0]["message"]["content"].strip()
                     if self._is_plausible_translation(text, translated_text):
-                        logger.debug(f"AI翻译成功，结果: {translated_text[:100]}...")
-                        return translated_text
+                        return translated_text, False
                     logger.warning(
-                        f"AI翻译第{attempt + 1}次结果未通过校验"
+                        f"AI渠道结果未通过校验"
                         f"（原文回显或提示词泄漏），重试: {translated_text[:80]}...")
             except Exception as e:
-                logger.warning(f"AI翻译第{attempt + 1}次失败：{e}")
+                logger.warning(f"AI渠道调用失败：{e}")
             if attempt < 2:
                 time.sleep(2 * (attempt + 1))
-
-        logger.error("AI翻译重试3次均失败，返回原文（下轮任务可重试）")
-        return text
+        return None, False
 
     def _is_plausible_translation(self, source: str, translated: str) -> bool:
-        """校验AI译文是否可信：非空、非原文回显、非提示词泄漏、目标语言含中文"""
+        """校验译文是否可信：非空、非原文回显、非提示词泄漏、目标语言含中文"""
         if not translated or not translated.strip():
             return False
         # 原文回显：模型拒绝翻译或复读输入
@@ -1495,51 +1647,45 @@ class tmdbstoryliner(_PluginBase):
         return True
 
     def _run_ai_test(self):
-        """测试AI翻译渠道连通性，结果同时写日志并推送通知"""
-        logger.info("开始测试AI翻译渠道")
-        base_url = (self._ai_base_url or "https://api.siliconflow.cn/v1").strip().rstrip("/")
-        if not self._siliconflow_api_key:
-            text = "AI翻译测试失败：未配置 AI翻译 API密钥"
-            logger.warning(text)
-        else:
-            if base_url.endswith("/chat/completions"):
-                url = base_url
-            else:
-                url = f"{base_url}/chat/completions"
+        """测试所有翻译渠道连通性，结果汇总推送"""
+        logger.info("开始测试翻译渠道")
+        sample = "The curious cat jumped over the lazy dog."
+        lines = []
+
+        # 免费引擎
+        for engine_name, engine in (("Google", self._google_translate),
+                                    ("MyMemory", self._mymemory_translate)):
             try:
-                response = requests.post(
-                    url,
-                    headers={
-                        "Authorization": f"Bearer {self._siliconflow_api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": self._siliconflow_model,
-                        "messages": [{"role": "user",
-                                      "content": "请将这句话翻译成中文，只输出译文：The curious cat jumped over the lazy dog."}],
-                        "temperature": 0.3,
-                        "max_tokens": 200,
-                    },
-                    timeout=30,
-                )
-                response.raise_for_status()
-                result = response.json()
-                if result.get("choices"):
-                    reply = (result["choices"][0].get("message", {}).get("content") or "").strip()
-                    text = (f"AI翻译测试成功！模型 {self._siliconflow_model} @ {base_url}\n"
-                            f"返回：{reply[:200]}")
-                    logger.info(text)
-                else:
-                    text = f"AI翻译测试失败：返回内容异常 {str(result)[:200]}"
-                    logger.warning(text)
+                result = engine(sample, "en", "zh")
+                ok = self._is_plausible_translation(sample, result)
+                lines.append(f"{'✅' if ok else '❌'} {engine_name}: {result[:60]}")
             except Exception as e:
-                text = f"AI翻译测试失败：{e}"
-                logger.warning(text)
+                lines.append(f"❌ {engine_name}: {e}")
+
+        # AI 渠道池
+        if not self._ai_channels:
+            lines.append("⚠️ 未配置AI渠道")
+        for idx, channel in enumerate(self._ai_channels):
+            label = f"AI渠道{idx + 1}（{channel['base_url']} / {channel['model']}）"
+            try:
+                translated, rate_limited = self._call_ai_channel(
+                    channel, sample, "en", "zh")
+                if translated:
+                    lines.append(f"✅ {label}: {translated[:60]}")
+                elif rate_limited:
+                    lines.append(f"⚠️ {label}: 限流")
+                else:
+                    lines.append(f"❌ {label}: 失败")
+            except Exception as e:
+                lines.append(f"❌ {label}: {e}")
+
+        text = "翻译渠道测试结果：\n" + "\n".join(lines)
+        logger.info(text)
         try:
             self.post_message(mtype=NotificationType.Plugin,
-                              title="【AI翻译测试】", text=text)
+                              title="【翻译渠道测试】", text=text)
         except Exception as e:
-            logger.warning(f"推送AI翻译测试结果失败：{e}")
+            logger.warning(f"推送翻译渠道测试结果失败：{e}")
 
     def _run_clear_cache(self):
         """清除状态缓存、更新历史与更新记录，结果写日志并推送"""
