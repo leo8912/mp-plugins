@@ -24,7 +24,7 @@ class tmdbstoryliner(_PluginBase):
     plugin_icon = "https://raw.githubusercontent.com/leo8912/mp-plugins/main/icons/tmdbstoryliner.png"
     plugin_author = "leo"
     author_url = "https://github.com/leo8912"
-    plugin_version = "3.0.8"
+    plugin_version = "3.0.9"
     plugin_locale = "zh"
     plugin_config_prefix = "tmdbstoryliner_"
     plugin_site = "https://www.themoviedb.org/"
@@ -976,7 +976,11 @@ class tmdbstoryliner(_PluginBase):
             for server_name, server_info in service_infos.items():
                 if not self._check_run_conditions():
                     return
-                libraries = mediaserver_chain.librarys(server_name)
+                try:
+                    libraries = mediaserver_chain.librarys(server_name)
+                except Exception as e:
+                    logger.error(f"获取媒体服务器 {server_name} 媒体库列表失败，跳过该服务器：{e}")
+                    continue
                 for library in libraries or []:
                     if not self._check_run_conditions():
                         return
@@ -984,7 +988,11 @@ class tmdbstoryliner(_PluginBase):
                     if self._library_paths and f"{server_name}:{library.id}" not in self._library_paths:
                         continue
 
-                    tv_series = [item for item in mediaserver_chain.items(server_name, library.id) if item]
+                    try:
+                        tv_series = [item for item in mediaserver_chain.items(server_name, library.id) if item]
+                    except Exception as e:
+                        logger.error(f"获取媒体库 {library.name} 项目列表失败，跳过该媒体库：{e}")
+                        continue
                     logger.info(f"媒体库 {library.name} 中找到 {len(tv_series)} 个项目")
 
                     for series in tv_series:
@@ -992,11 +1000,15 @@ class tmdbstoryliner(_PluginBase):
                             return
                         if not self._is_tv_item(series):
                             continue
-                        tmdb_id = self._get_tmdb_id(series)
-                        if not tmdb_id:
-                            logger.warning(f"项目 {getattr(series, 'title', '未知')} 缺少TMDB ID，跳过处理")
-                            continue
-                        self._process_series(mediaserver_chain, server_name, server_info, series, tmdb_id)
+                        title = getattr(series, 'title', '') or '未知'
+                        try:
+                            tmdb_id = self._get_tmdb_id(series)
+                            if not tmdb_id:
+                                logger.warning(f"项目 {title} 缺少TMDB ID，跳过处理")
+                                continue
+                            self._process_series(mediaserver_chain, server_name, server_info, series, tmdb_id)
+                        except Exception as e:
+                            logger.error(f"处理电视剧 {title} 出错，跳过并继续下一部：{e}")
         except Exception as e:
             logger.error(f"更新电视剧剧情简介时发生错误：{e}")
         finally:
@@ -1064,8 +1076,12 @@ class tmdbstoryliner(_PluginBase):
                 return
             key = f"S{season_number:02d}E{episode_number:02d}"
             item_id = (episode_items.get(key) or {}).get('Id')
-            self._update_one_episode(server_name, server_info.type, series, tmdb_id,
-                                     season_number, episode_number, item_id, use_extended)
+            try:
+                self._update_one_episode(server_name, server_info.type, series, tmdb_id,
+                                         season_number, episode_number, item_id, use_extended)
+            except Exception as e:
+                logger.error(f"更新 {series.title} S{season_number:02d}E{episode_number:02d} 出错，跳过该集：{e}")
+                self._update_history_record(tmdb_id, season_number, episode_number, "failed")
 
     def _update_one_episode(self, server_name: str, server_type: str, series,
                             tmdb_id: int, season_number: int, episode_number: int,
@@ -1138,22 +1154,28 @@ class tmdbstoryliner(_PluginBase):
                                         translated_name=translated_name)
 
             if self._enable_notify:
-                self.post_message(
-                    mtype=NotificationType.Plugin,
-                    title="【剧情信息更新啦】🎉",
-                    text=f"📺 剧集 {episode_label} 已更新\n"
-                         f"标题：{translated_name}\n"
-                         f"剧情简介：{translated_overview[:100]}"
-                         f"{'...' if len(translated_overview) > 100 else ''}"
-                )
+                try:
+                    self.post_message(
+                        mtype=NotificationType.Plugin,
+                        title="【剧情信息更新啦】🎉",
+                        text=f"📺 剧集 {episode_label} 已更新\n"
+                             f"标题：{translated_name}\n"
+                             f"剧情简介：{translated_overview[:100]}"
+                             f"{'...' if len(translated_overview) > 100 else ''}"
+                    )
+                except Exception as e:
+                    logger.warning(f"推送 {episode_label} 更新通知失败：{e}")
         else:
             logger.error(f"更新 {episode_label} 标题和剧情简介失败")
             self._update_history_record(tmdb_id, season_number, episode_number, "failed")
 
-        has_translation = (translated_overview != overview) or (translated_name != name)
-        self.save_update_history(
-            episode_label, "电视剧剧集",
-            "已翻译并更新" if has_translation else "已更新原始内容")
+        try:
+            has_translation = (translated_overview != overview) or (translated_name != name)
+            self.save_update_history(
+                episode_label, "电视剧剧集",
+                "已翻译并更新" if has_translation else "已更新原始内容")
+        except Exception as e:
+            logger.warning(f"记录 {episode_label} 更新历史失败：{e}")
 
     def _apply_extended_fields(self, iteminfo: dict, episode_details: dict,
                                episode_label: str) -> None:
@@ -1396,15 +1418,14 @@ class tmdbstoryliner(_PluginBase):
             return text
 
     def ai_translate_text(self, text: str, source_lang: str = "en", target_lang: str = "zh") -> str:
-        """使用OpenAI兼容渠道AI翻译文本"""
+        """使用OpenAI兼容渠道AI翻译文本（带重试与结果校验）"""
         if not text:
             return text
         if not self._siliconflow_api_key:
             logger.warning("AI翻译未配置API密钥，跳过翻译")
             return text
 
-        try:
-            prompt = f"""你是一位专业的影视翻译人员，请将以下{source_lang}影视内容翻译成{target_lang}：
+        prompt = f"""你是一位专业的影视翻译人员，请将以下{source_lang}影视内容翻译成{target_lang}：
 
 {text}
 
@@ -1415,35 +1436,63 @@ class tmdbstoryliner(_PluginBase):
 4. 保持特殊格式不变（如标点符号、换行等）
 5. 仅输出翻译结果，不要添加任何解释或其他内容"""
 
-            # OpenAI兼容渠道：支持 SiliconFlow / OpenRouter / 任意兼容端点
-            base_url = (self._ai_base_url or "https://api.siliconflow.cn/v1").strip().rstrip("/")
-            if base_url.endswith("/chat/completions"):
-                url = base_url
-            else:
-                url = f"{base_url}/chat/completions"
-            headers = {
-                "Authorization": f"Bearer {self._siliconflow_api_key}",
-                "Content-Type": "application/json"
-            }
-            data = {
-                "model": self._siliconflow_model,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.7,
-                "max_tokens": 4096
-            }
-            response = requests.post(url, headers=headers, json=data, timeout=120)
-            response.raise_for_status()
-            result = response.json()
+        # OpenAI兼容渠道：支持 SiliconFlow / OpenRouter / 任意兼容端点
+        base_url = (self._ai_base_url or "https://api.siliconflow.cn/v1").strip().rstrip("/")
+        if base_url.endswith("/chat/completions"):
+            url = base_url
+        else:
+            url = f"{base_url}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self._siliconflow_api_key}",
+            "Content-Type": "application/json"
+        }
+        data = {
+            "model": self._siliconflow_model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.3,
+            "max_tokens": 4096
+        }
 
-            if "choices" in result and len(result["choices"]) > 0:
-                translated_text = result["choices"][0]["message"]["content"].strip()
-                logger.debug(f"AI翻译成功，结果: {translated_text[:100]}...")
-                return translated_text
-            logger.error(f"AI翻译返回错误：{result}")
-            return text
-        except Exception as e:
-            logger.error(f"AI翻译失败：{e}")
-            return text
+        for attempt in range(3):
+            try:
+                response = requests.post(url, headers=headers, json=data, timeout=120)
+                response.raise_for_status()
+                result = response.json()
+
+                if "choices" not in result or not result["choices"]:
+                    logger.error(f"AI翻译返回错误：{result}")
+                else:
+                    translated_text = result["choices"][0]["message"]["content"].strip()
+                    if self._is_plausible_translation(text, translated_text):
+                        logger.debug(f"AI翻译成功，结果: {translated_text[:100]}...")
+                        return translated_text
+                    logger.warning(
+                        f"AI翻译第{attempt + 1}次结果未通过校验"
+                        f"（原文回显或提示词泄漏），重试: {translated_text[:80]}...")
+            except Exception as e:
+                logger.warning(f"AI翻译第{attempt + 1}次失败：{e}")
+            if attempt < 2:
+                time.sleep(2 * (attempt + 1))
+
+        logger.error("AI翻译重试3次均失败，返回原文（下轮任务可重试）")
+        return text
+
+    def _is_plausible_translation(self, source: str, translated: str) -> bool:
+        """校验AI译文是否可信：非空、非原文回显、非提示词泄漏、目标语言含中文"""
+        if not translated or not translated.strip():
+            return False
+        # 原文回显：模型拒绝翻译或复读输入
+        if translated.strip() == source.strip():
+            return False
+        # 提示词泄漏：模型把指令/要求部分吐出来
+        prompt_markers = ("翻译要求", "仅输出翻译结果", "影视翻译人员",
+                          "将所有英文内容翻译成中文")
+        if any(marker in translated for marker in prompt_markers):
+            return False
+        # 译文应含中文（本插件目标语言固定为中文）
+        if not self._is_chinese(translated):
+            return False
+        return True
 
     def _run_ai_test(self):
         """测试AI翻译渠道连通性，结果同时写日志并推送通知"""
