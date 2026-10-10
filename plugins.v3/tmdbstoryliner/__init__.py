@@ -61,7 +61,7 @@ class tmdbstoryliner(_PluginBase):
         # AI翻译渠道（每行 base_url|api_key|model，按顺序依次尝试）
         self._ai_channels_text = ""
         self._ai_channels: List[dict] = []
-        # 翻译请求代理（AI与谷歌翻译共用；留空直连，如 http://127.0.0.1:7897）
+        # 谷歌翻译代理（仅谷歌翻译请求使用；留空直连，如 http://127.0.0.1:7897）
         self._translate_proxy = ""
         # 缓存与历史（实例属性，避免多实例共享）
         self._series_status_cache: Dict[str, dict] = {}
@@ -347,7 +347,7 @@ class tmdbstoryliner(_PluginBase):
                                 'props': {'cols': 12, 'md': 6},
                                 'content': [{
                                     'component': 'VTextField',
-                                    'props': {'model': 'translate_proxy', 'label': '翻译代理（AI与谷歌翻译请求走此代理，留空直连）',
+                                    'props': {'model': 'translate_proxy', 'label': '谷歌翻译代理（仅谷歌翻译请求使用，留空直连）',
                                               'placeholder': '如: http://192.168.1.10:7897'},
                                 }]
                             },
@@ -1543,7 +1543,7 @@ class tmdbstoryliner(_PluginBase):
             return text
 
     def _translate_proxies(self) -> Optional[dict]:
-        """翻译请求代理；未设置返回 None（走环境代理/直连）。"""
+        """谷歌翻译请求代理；未设置返回 None（走环境代理/直连）。"""
         proxy = self._translate_proxy
         if not proxy:
             return None
@@ -1636,8 +1636,7 @@ class tmdbstoryliner(_PluginBase):
 
         for attempt in range(3):
             try:
-                response = requests.post(url, headers=headers, json=data, timeout=120,
-                                        proxies=self._translate_proxies())
+                response = requests.post(url, headers=headers, json=data, timeout=120)
                 # 429/配额类错误：换渠道比重试更有效
                 if response.status_code == 429 or (
                         response.status_code == 403
