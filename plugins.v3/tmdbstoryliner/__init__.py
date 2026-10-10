@@ -24,7 +24,7 @@ class tmdbstoryliner(_PluginBase):
     plugin_icon = "https://raw.githubusercontent.com/leo8912/mp-plugins/main/icons/tmdbstoryliner.png"
     plugin_author = "leo"
     author_url = "https://github.com/leo8912"
-    plugin_version = "3.1.0"
+    plugin_version = "3.1.1"
     plugin_locale = "zh"
     plugin_config_prefix = "tmdbstoryliner_"
     plugin_site = "https://www.themoviedb.org/"
@@ -58,11 +58,11 @@ class tmdbstoryliner(_PluginBase):
         self._siliconflow_model = "Qwen/Qwen2.5-7B-Instruct"
         # OpenAI兼容渠道 Base URL（留空默认 SiliconFlow）
         self._ai_base_url = ""
-        # AI多渠道负载均衡（每行 base_url|api_key|model）
+        # AI翻译渠道（每行 base_url|api_key|model，按顺序依次尝试）
         self._ai_channels_text = ""
         self._ai_channels: List[dict] = []
-        self._channel_rr = 0
-        self._cooldown_channels: set = set()
+        # 翻译请求代理（AI与谷歌翻译共用；留空直连，如 http://127.0.0.1:7897）
+        self._translate_proxy = ""
         # 缓存与历史（实例属性，避免多实例共享）
         self._series_status_cache: Dict[str, dict] = {}
         self._update_history: Dict[str, dict] = {}
@@ -94,6 +94,7 @@ class tmdbstoryliner(_PluginBase):
             "enable_notify": self._enable_notify,
             "ai_translate": self._ai_translate,
             "ai_channels": self._ai_channels_text,
+            "translate_proxy": self._translate_proxy,
             # 旧单渠道字段镜像第一渠道，保持旧版配置可读
             "siliconflow_api_key": self._ai_channels[0]["api_key"] if self._ai_channels else "",
             "siliconflow_model": (self._ai_channels[0]["model"] or "Qwen/Qwen2.5-7B-Instruct") if self._ai_channels else "",
@@ -147,8 +148,7 @@ class tmdbstoryliner(_PluginBase):
             self._ai_base_url = (config.get("ai_base_url") or "").strip()
             self._ai_channels_text = config.get("ai_channels") or ""
             self._ai_channels = self._parse_ai_channels()
-            self._channel_rr = 0
-            self._cooldown_channels = set()
+            self._translate_proxy = (config.get("translate_proxy") or "").strip()
 
         # 加载缓存和历史记录
         self._load_cache_and_history()
@@ -347,6 +347,20 @@ class tmdbstoryliner(_PluginBase):
                                 'props': {'cols': 12, 'md': 6},
                                 'content': [{
                                     'component': 'VTextField',
+                                    'props': {'model': 'translate_proxy', 'label': '翻译代理（AI与谷歌翻译请求走此代理，留空直连）',
+                                              'placeholder': '如: http://192.168.1.10:7897'},
+                                }]
+                            },
+                        ]
+                    },
+                    {
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {'cols': 12, 'md': 6},
+                                'content': [{
+                                    'component': 'VTextField',
                                     'props': {'model': 'tmdb_api_key', 'label': 'TMDB API 密钥',
                                               'placeholder': '请输入TMDB API密钥'},
                                 }]
@@ -455,11 +469,11 @@ class tmdbstoryliner(_PluginBase):
                                     'component': 'VTextarea',
                                     'props': {
                                         'model': 'ai_channels',
-                                        'label': 'AI多渠道负载均衡（每行一个：base_url|api_key|model，model可省略）',
+                                        'label': 'AI翻译渠道（每行一个：base_url|api_key|model，model可省略）',
                                         'placeholder': 'https://api.groq.com/openai/v1|gsk_xxx|llama-3.3-70b-versatile\n'
                                                        'https://api.cerebras.ai/v1|csk-xxx\n'
                                                        'https://generativelanguage.googleapis.com/v1beta/openai|AIza-xxx|gemini-2.0-flash\n'
-                                                       '填写后逐次调用轮询分摊、限流渠道本任务内自动冷却；留空则使用下方单渠道配置',
+                                                       '按填写顺序依次尝试，第一个成功即返回，全部失败自动降级谷歌翻译；留空则使用下方单渠道配置',
                                         'rows': 4,
                                     },
                                 }]
@@ -497,7 +511,7 @@ class tmdbstoryliner(_PluginBase):
                                 'props': {'cols': 12, 'md': 6},
                                 'content': [{
                                     'component': 'VSwitch',
-                                    'props': {'model': 'test_ai', 'label': '测试AI翻译（打开后保存，后台执行一次并推送结果）'},
+                                    'props': {'model': 'test_ai', 'label': '测试翻译（谷歌+AI渠道，打开后保存执行一次并推送结果）'},
                                 }]
                             },
                             {
@@ -908,8 +922,6 @@ class tmdbstoryliner(_PluginBase):
             return
         try:
             logger.info("开始更新TMDB剧情简介")
-            # 每轮任务重置渠道冷却，重新参与负载均衡
-            self._cooldown_channels = set()
             try:
                 if self._update_series:
                     self.update_series_storylines()
@@ -1469,7 +1481,7 @@ class tmdbstoryliner(_PluginBase):
         return channels
 
     def translate_text(self, text: str, source_lang: str = "en", target_lang: str = "zh") -> str:
-        """按服务配置翻译：AI走渠道池（失败降级免费池），Google直接走免费池。"""
+        """翻译链：AI优先，失败降级谷歌；谷歌失败再降级谷歌备用端点。"""
         if not text or source_lang == target_lang:
             return text
         try:
@@ -1477,7 +1489,7 @@ class tmdbstoryliner(_PluginBase):
                 translated = self.ai_translate_text(text, source_lang, target_lang)
                 if translated != text:
                     return translated
-                logger.warning("AI渠道全部失败，降级到免费翻译")
+                logger.warning("AI翻译失败，降级到谷歌翻译")
                 return self._free_translate(text, source_lang, target_lang)
             if self._translate_service == "google":
                 return self._free_translate(text, source_lang, target_lang)
@@ -1488,11 +1500,12 @@ class tmdbstoryliner(_PluginBase):
             return text
 
     def _free_translate(self, text: str, source_lang: str, target_lang: str) -> str:
-        """免费引擎池：Google gtx → MyMemory，校验通过即返回。"""
+        """免费兜底链：Google gtx → 谷歌备用端点，校验通过即返回。"""
         result = self._google_translate(text, source_lang, target_lang)
         if result != text and self._is_plausible_translation(text, result):
             return result
-        result = self._mymemory_translate(text, source_lang, target_lang)
+        logger.warning("谷歌翻译失败，降级到谷歌备用端点")
+        result = self._google_backup_translate(text, source_lang, target_lang)
         if result != text and self._is_plausible_translation(text, result):
             return result
         return text
@@ -1508,7 +1521,8 @@ class tmdbstoryliner(_PluginBase):
                 "dt": "t",
                 "q": text
             }
-            response = requests.get(url, params=params, timeout=10)
+            response = requests.get(url, params=params, timeout=10,
+                                    proxies=self._translate_proxies())
             response.raise_for_status()
             result = response.json()
 
@@ -1528,51 +1542,68 @@ class tmdbstoryliner(_PluginBase):
             logger.error(f"Google翻译失败：{e}")
             return text
 
-    def _mymemory_translate(self, text: str, source_lang: str, target_lang: str) -> str:
-        """MyMemory 免费翻译（兜底；免费额度约5000字符/天）"""
+    def _translate_proxies(self) -> Optional[dict]:
+        """翻译请求代理；未设置返回 None（走环境代理/直连）。"""
+        proxy = self._translate_proxy
+        if not proxy:
+            return None
+        if "://" not in proxy:
+            proxy = f"http://{proxy}"
+        return {"http": proxy, "https": proxy}
+
+    def _google_backup_translate(self, text: str, source_lang: str, target_lang: str) -> str:
+        """谷歌免费备用端点（clients5 / dict-chrome-ex）：gtx 限流或连不上时兜底。
+
+        实测 gtx 返回 429 时该端点仍可用，与 gtx 共用谷歌翻译后端。
+        """
         try:
-            # MyMemory 中文代码为 zh-CN
-            pair_target = "zh-CN" if target_lang == "zh" else target_lang
-            response = requests.get(
-                "https://api.mymemory.translated.net/get",
-                params={"q": text, "langpair": f"{source_lang}|{pair_target}"},
-                timeout=15,
-            )
+            url = "https://clients5.google.com/translate_a/t"
+            params = {
+                "client": "dict-chrome-ex",
+                "sl": source_lang,
+                "tl": target_lang,
+                "q": text
+            }
+            response = requests.get(url, params=params, timeout=10,
+                                    proxies=self._translate_proxies())
             response.raise_for_status()
             result = response.json()
-            translated = ((result.get("responseData") or {}).get("translatedText") or "").strip()
-            if result.get("responseStatus") == 200 and translated:
-                return translated
-            logger.warning(f"MyMemory翻译返回异常：{result.get('responseDetails')}")
+
+            translated_text = ""
+            if isinstance(result, list) and result:
+                if isinstance(result[0], str):
+                    translated_text = "".join(
+                        item for item in result if isinstance(item, str))
+                else:
+                    for item in result[0]:
+                        piece = item if isinstance(item, str) else (
+                            item[0] if item and isinstance(item[0], str) else "")
+                        if piece:
+                            translated_text += piece
+            if translated_text.strip():
+                return translated_text
+
+            logger.warning("谷歌备用端点返回空结果")
             return text
         except Exception as e:
-            logger.error(f"MyMemory翻译失败：{e}")
+            logger.error(f"谷歌备用端点翻译失败：{e}")
             return text
 
     def ai_translate_text(self, text: str, source_lang: str = "en", target_lang: str = "zh") -> str:
-        """AI渠道池翻译：逐次轮询分摊负载；限流渠道本任务内冷却。全失败返回原文。"""
+        """AI翻译：按配置顺序依次尝试渠道，第一个成功即返回；全部失败返回原文。"""
         if not text:
             return text
         channels = self._ai_channels
         if not channels:
             logger.warning("AI翻译未配置任何渠道")
             return text
-        total = len(channels)
-        start = self._channel_rr % total
-        for i in range(total):
-            idx = (start + i) % total
-            if idx in self._cooldown_channels:
-                continue
-            channel = channels[idx]
+        for idx, channel in enumerate(channels):
             translated, rate_limited = self._call_ai_channel(
                 channel, text, source_lang, target_lang)
-            # 无论成败，下次调用从下一渠道开始，实现负载分摊
-            self._channel_rr = (idx + 1) % total
             if translated is not None:
                 return translated
             if rate_limited:
-                logger.warning(f"AI渠道{idx + 1}（{channel['base_url']}）限流，本任务内冷却")
-                self._cooldown_channels.add(idx)
+                logger.warning(f"AI渠道{idx + 1}（{channel['base_url']}）限流，尝试下一渠道")
         logger.error("所有AI渠道均失败，返回原文")
         return text
 
@@ -1605,7 +1636,8 @@ class tmdbstoryliner(_PluginBase):
 
         for attempt in range(3):
             try:
-                response = requests.post(url, headers=headers, json=data, timeout=120)
+                response = requests.post(url, headers=headers, json=data, timeout=120,
+                                        proxies=self._translate_proxies())
                 # 429/配额类错误：换渠道比重试更有效
                 if response.status_code == 429 or (
                         response.status_code == 403
@@ -1653,8 +1685,8 @@ class tmdbstoryliner(_PluginBase):
         lines = []
 
         # 免费引擎
-        for engine_name, engine in (("Google", self._google_translate),
-                                    ("MyMemory", self._mymemory_translate)):
+        for engine_name, engine in (("谷歌(gtx)", self._google_translate),
+                                    ("谷歌备用端点", self._google_backup_translate)):
             try:
                 result = engine(sample, "en", "zh")
                 ok = self._is_plausible_translation(sample, result)
@@ -1679,7 +1711,8 @@ class tmdbstoryliner(_PluginBase):
             except Exception as e:
                 lines.append(f"❌ {label}: {e}")
 
-        text = "翻译渠道测试结果：\n" + "\n".join(lines)
+        proxy_note = f"代理: {self._translate_proxy}" if self._translate_proxy else "未设代理，直连"
+        text = f"翻译渠道测试结果（{proxy_note}）：\n" + "\n".join(lines)
         logger.info(text)
         try:
             self.post_message(mtype=NotificationType.Plugin,
