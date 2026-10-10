@@ -24,7 +24,7 @@ class tmdbstoryliner(_PluginBase):
     plugin_icon = "https://raw.githubusercontent.com/leo8912/mp-plugins/main/icons/tmdbstoryliner.png"
     plugin_author = "leo"
     author_url = "https://github.com/leo8912"
-    plugin_version = "3.1.2"
+    plugin_version = "3.1.3"
     plugin_locale = "zh"
     plugin_config_prefix = "tmdbstoryliner_"
     plugin_site = "https://www.themoviedb.org/"
@@ -1168,7 +1168,6 @@ class tmdbstoryliner(_PluginBase):
 
         overview = episode_details.get('overview', '').strip()
         name = episode_details.get('name', '').strip()
-        need_translate = episode_details.get('_need_translate', False)
 
         if not overview and not name:
             logger.debug(f"{episode_label} 没有剧情简介和标题")
@@ -1191,7 +1190,7 @@ class tmdbstoryliner(_PluginBase):
 
         # 3. 翻译
         translated_overview, translated_name = self._translate_fields(
-            overview, name, need_translate, episode_label)
+            overview, name, episode_label)
 
         # 4. 更新字段（翻译失败时保护现有中文，不用英文覆盖）
         existing_overview = (iteminfo.get('Overview') or '').strip()
@@ -1267,9 +1266,9 @@ class tmdbstoryliner(_PluginBase):
                 logger.debug(f"{episode_label} 演职人员信息更新暂未实现: "
                              f"guest_stars={len(guest_stars)}, crew={len(crew)}")
 
-    def _translate_fields(self, overview: str, name: str, need_translate: bool,
+    def _translate_fields(self, overview: str, name: str,
                           episode_label: str) -> Tuple[str, str]:
-        """按配置的翻译服务处理简介与标题（AI失败自动降级免费池）"""
+        """按配置的翻译服务处理简介与标题（仅翻译非中文字段，AI失败自动降级谷歌）"""
         translated_overview = overview
         translated_name = name
 
@@ -1277,7 +1276,7 @@ class tmdbstoryliner(_PluginBase):
             logger.debug(f"{episode_label} 未配置翻译服务，跳过翻译")
             return translated_overview, translated_name
 
-        if overview and (need_translate or not self._is_chinese(overview)):
+        if overview and not self._is_chinese(overview):
             logger.info(f"{episode_label} 剧情简介需要翻译: {overview[:50]}...")
             translated = self.translate_text(overview)
             # 翻译失败（返回原文）时不拼原文标记，保持可重试
@@ -1285,7 +1284,7 @@ class tmdbstoryliner(_PluginBase):
                 translated_overview = self._combine_translation_with_original(
                     translated, overview, False)
 
-        if name and (need_translate or not self._is_chinese(name)):
+        if name and not self._is_chinese(name):
             logger.info(f"{episode_label} 标题需要翻译: {name}")
             translated = self.translate_text(name)
             if translated != name:
@@ -1334,8 +1333,7 @@ class tmdbstoryliner(_PluginBase):
                 if response.status_code == 404:
                     # TMDB 不存在该集（本地季集编号与 TMDB 不一致），属永久失败，不重试
                     logger.info(f"TMDB 无此集 {series_id} S{season_number:02d}E{episode_number:02d}，跳过")
-                    return {'overview': '', 'name': '', '_need_translate': False,
-                            '_not_found': True}
+                    return {'overview': '', 'name': '', '_not_found': True}
                 response.raise_for_status()
                 result = response.json()
 
@@ -1358,17 +1356,6 @@ class tmdbstoryliner(_PluginBase):
                         overview = english_result['overview']
                     if not name and english_result.get('name'):
                         name = english_result['name']
-                    result['_need_translate'] = english_result.get('_need_translate', False) or (
-                        (overview and not self._is_chinese(overview)) or
-                        (name and not self._is_chinese(name))
-                    )
-                else:
-                    result['_need_translate'] = (
-                        (overview and overview.isascii()) or
-                        (name and name.isascii()) or
-                        (overview and not self._is_chinese(overview)) or
-                        (name and not self._is_chinese(name))
-                    )
 
                 result['overview'] = overview
                 result['name'] = name
@@ -1384,7 +1371,7 @@ class tmdbstoryliner(_PluginBase):
                     time.sleep(5)
                 else:
                     logger.error(f"获取剧集详情完全失败：{e}")
-                    return {'overview': '', 'name': '', '_need_translate': False}
+                    return {'overview': '', 'name': ''}
 
     @staticmethod
     def _extract_extended_fields(result: dict) -> dict:
@@ -1413,11 +1400,9 @@ class tmdbstoryliner(_PluginBase):
                 }
                 response = requests.get(url, params=params, timeout=30)
                 if response.status_code == 404:
-                    return {'overview': '', 'name': '', '_need_translate': False,
-                            '_not_found': True}
+                    return {'overview': '', 'name': '', '_not_found': True}
                 response.raise_for_status()
                 result = response.json()
-                result['_need_translate'] = True
                 result['overview'] = (result.get('overview') or '').strip()
                 result['name'] = (result.get('name') or '').strip()
                 return result
@@ -1427,7 +1412,7 @@ class tmdbstoryliner(_PluginBase):
                     time.sleep(5)
                 else:
                     logger.error(f"获取英文剧集详情完全失败：{e}")
-                    return {'overview': '', 'name': '', '_need_translate': False}
+                    return {'overview': '', 'name': ''}
 
     # ------------------------------------------------------------------
     # 翻译
@@ -1569,12 +1554,16 @@ class tmdbstoryliner(_PluginBase):
                 if "choices" not in result or not result["choices"]:
                     logger.error(f"AI渠道返回错误：{str(result)[:200]}")
                 else:
-                    translated_text = result["choices"][0]["message"]["content"].strip()
-                    if self._is_plausible_translation(text, translated_text):
+                    content = (result["choices"][0].get("message") or {}).get("content")
+                    translated_text = (content or "").strip()
+                    if not translated_text:
+                        logger.warning("AI渠道返回空内容，重试")
+                    elif self._is_plausible_translation(text, translated_text):
                         return translated_text, False
-                    logger.warning(
-                        f"AI渠道结果未通过校验"
-                        f"（原文回显或提示词泄漏），重试: {translated_text[:80]}...")
+                    else:
+                        logger.warning(
+                            f"AI渠道结果未通过校验"
+                            f"（原文回显或提示词泄漏），重试: {translated_text[:80]}...")
             except Exception as e:
                 logger.warning(f"AI渠道调用失败：{e}")
             if attempt < 2:
