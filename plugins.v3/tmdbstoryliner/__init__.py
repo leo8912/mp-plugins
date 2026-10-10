@@ -61,8 +61,10 @@ class tmdbstoryliner(_PluginBase):
         # AI翻译渠道（每行 base_url|api_key|model，按顺序依次尝试）
         self._ai_channels_text = ""
         self._ai_channels: List[dict] = []
-        # 谷歌翻译代理（仅谷歌翻译请求使用；留空直连，如 http://127.0.0.1:7897）
+        # 谷歌翻译代理（仅谷歌翻译请求：先直连，连接失败且配置代理时改走代理）
         self._translate_proxy = ""
+        # 直连失败过的谷歌端点（配置代理后这些端点跳过直连直接走代理）
+        self._google_direct_failed: set = set()
         # 缓存与历史（实例属性，避免多实例共享）
         self._series_status_cache: Dict[str, dict] = {}
         self._update_history: Dict[str, dict] = {}
@@ -149,6 +151,7 @@ class tmdbstoryliner(_PluginBase):
             self._ai_channels_text = config.get("ai_channels") or ""
             self._ai_channels = self._parse_ai_channels()
             self._translate_proxy = (config.get("translate_proxy") or "").strip()
+            self._google_direct_failed = set()
 
         # 加载缓存和历史记录
         self._load_cache_and_history()
@@ -347,7 +350,7 @@ class tmdbstoryliner(_PluginBase):
                                 'props': {'cols': 12, 'md': 6},
                                 'content': [{
                                     'component': 'VTextField',
-                                    'props': {'model': 'translate_proxy', 'label': '谷歌翻译代理（仅谷歌翻译请求使用，留空直连）',
+                                    'props': {'model': 'translate_proxy', 'label': '谷歌翻译代理（先直连，连接失败自动改走代理；留空仅直连）',
                                               'placeholder': '如: http://192.168.1.10:7897'},
                                 }]
                             },
@@ -1521,10 +1524,7 @@ class tmdbstoryliner(_PluginBase):
                 "dt": "t",
                 "q": text
             }
-            response = requests.get(url, params=params, timeout=10,
-                                    proxies=self._translate_proxies())
-            response.raise_for_status()
-            result = response.json()
+            result = self._google_get_json(url, params)
 
             if result and len(result) > 0 and result[0]:
                 translated_text = ""
@@ -1541,6 +1541,28 @@ class tmdbstoryliner(_PluginBase):
         except Exception as e:
             logger.error(f"Google翻译失败：{e}")
             return text
+
+    def _google_get_json(self, url: str, params: dict):
+        """请求谷歌翻译端点：先直连；连接失败且配置了代理则改走代理，并记住该端点直连不可用。
+
+        HTTP 错误（如429 限流）说明连通正常，不切换代理。
+        """
+        if url not in self._google_direct_failed or not self._translate_proxy:
+            try:
+                response = requests.get(url, params=params, timeout=10)
+                response.raise_for_status()
+                return response.json()
+            except requests.exceptions.HTTPError:
+                raise
+            except requests.exceptions.RequestException as e:
+                if not self._translate_proxy:
+                    raise
+                logger.warning(f"谷歌端点（{url.split('/')[2]}）直连失败，改走代理：{e}")
+                self._google_direct_failed.add(url)
+        response = requests.get(url, params=params, timeout=10,
+                                proxies=self._translate_proxies())
+        response.raise_for_status()
+        return response.json()
 
     def _translate_proxies(self) -> Optional[dict]:
         """谷歌翻译请求代理；未设置返回 None（走环境代理/直连）。"""
@@ -1564,10 +1586,7 @@ class tmdbstoryliner(_PluginBase):
                 "tl": target_lang,
                 "q": text
             }
-            response = requests.get(url, params=params, timeout=10,
-                                    proxies=self._translate_proxies())
-            response.raise_for_status()
-            result = response.json()
+            result = self._google_get_json(url, params)
 
             translated_text = ""
             if isinstance(result, list) and result:
@@ -1710,7 +1729,8 @@ class tmdbstoryliner(_PluginBase):
             except Exception as e:
                 lines.append(f"❌ {label}: {e}")
 
-        proxy_note = f"代理: {self._translate_proxy}" if self._translate_proxy else "未设代理，直连"
+        proxy_note = (f"谷歌代理: {self._translate_proxy}（直连失败时启用）"
+                      if self._translate_proxy else "未设谷歌代理（仅直连）")
         text = f"翻译渠道测试结果（{proxy_note}）：\n" + "\n".join(lines)
         logger.info(text)
         try:
