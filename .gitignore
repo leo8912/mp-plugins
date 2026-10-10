@@ -9,3 +9,5 @@ tmdbstoryliner.zip
 
 __pycache__/
 *.pyc
+.mimocode/
+*.zip
