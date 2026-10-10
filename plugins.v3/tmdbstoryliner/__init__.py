@@ -1559,19 +1559,12 @@ class tmdbstoryliner(_PluginBase):
                     raise
                 logger.warning(f"谷歌端点（{url.split('/')[2]}）直连失败，改走代理：{e}")
                 self._google_direct_failed.add(url)
-        response = requests.get(url, params=params, timeout=10,
-                                proxies=self._translate_proxies())
+        response = requests.get(
+            url, params=params, timeout=10,
+            proxies=({"http": self._translate_proxy, "https": self._translate_proxy}
+                     if self._translate_proxy else None))
         response.raise_for_status()
         return response.json()
-
-    def _translate_proxies(self) -> Optional[dict]:
-        """谷歌翻译请求代理；未设置返回 None（走环境代理/直连）。"""
-        proxy = self._translate_proxy
-        if not proxy:
-            return None
-        if "://" not in proxy:
-            proxy = f"http://{proxy}"
-        return {"http": proxy, "https": proxy}
 
     def _google_backup_translate(self, text: str, source_lang: str, target_lang: str) -> str:
         """谷歌免费备用端点（clients5 / dict-chrome-ex）：gtx 限流或连不上时兜底。
@@ -1588,17 +1581,8 @@ class tmdbstoryliner(_PluginBase):
             }
             result = self._google_get_json(url, params)
 
-            translated_text = ""
-            if isinstance(result, list) and result:
-                if isinstance(result[0], str):
-                    translated_text = "".join(
-                        item for item in result if isinstance(item, str))
-                else:
-                    for item in result[0]:
-                        piece = item if isinstance(item, str) else (
-                            item[0] if item and isinstance(item[0], str) else "")
-                        if piece:
-                            translated_text += piece
+            translated_text = ("".join(x for x in result if isinstance(x, str))
+                               if isinstance(result, list) else "")
             if translated_text.strip():
                 return translated_text
 
