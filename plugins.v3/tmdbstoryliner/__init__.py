@@ -24,7 +24,7 @@ class tmdbstoryliner(_PluginBase):
     plugin_icon = "https://raw.githubusercontent.com/leo8912/mp-plugins/main/icons/tmdbstoryliner.png"
     plugin_author = "leo"
     author_url = "https://github.com/leo8912"
-    plugin_version = "3.1.1"
+    plugin_version = "3.1.2"
     plugin_locale = "zh"
     plugin_config_prefix = "tmdbstoryliner_"
     plugin_site = "https://www.themoviedb.org/"
@@ -52,19 +52,14 @@ class tmdbstoryliner(_PluginBase):
         self._update_episode_credits = True
         # 推送配置
         self._enable_notify = True
-        # AI翻译配置
+        # AI翻译配置（单渠道）
         self._ai_translate = False
         self._siliconflow_api_key = ""
         self._siliconflow_model = "Qwen/Qwen2.5-7B-Instruct"
         # OpenAI兼容渠道 Base URL（留空默认 SiliconFlow）
         self._ai_base_url = ""
-        # AI翻译渠道（每行 base_url|api_key|model，按顺序依次尝试）
-        self._ai_channels_text = ""
-        self._ai_channels: List[dict] = []
-        # 谷歌翻译代理（仅谷歌翻译请求：先直连，连接失败且配置代理时改走代理）
+        # 谷歌翻译代理（谷歌翻译请求走此代理，留空直连）
         self._translate_proxy = ""
-        # 直连失败过的谷歌端点（配置代理后这些端点跳过直连直接走代理）
-        self._google_direct_failed: set = set()
         # 缓存与历史（实例属性，避免多实例共享）
         self._series_status_cache: Dict[str, dict] = {}
         self._update_history: Dict[str, dict] = {}
@@ -95,12 +90,10 @@ class tmdbstoryliner(_PluginBase):
             "update_episode_credits": self._update_episode_credits,
             "enable_notify": self._enable_notify,
             "ai_translate": self._ai_translate,
-            "ai_channels": self._ai_channels_text,
             "translate_proxy": self._translate_proxy,
-            # 旧单渠道字段镜像第一渠道，保持旧版配置可读
-            "siliconflow_api_key": self._ai_channels[0]["api_key"] if self._ai_channels else "",
-            "siliconflow_model": (self._ai_channels[0]["model"] or "Qwen/Qwen2.5-7B-Instruct") if self._ai_channels else "",
-            "ai_base_url": self._ai_channels[0]["base_url"] if self._ai_channels else "",
+            "siliconflow_api_key": self._siliconflow_api_key,
+            "siliconflow_model": self._siliconflow_model,
+            "ai_base_url": self._ai_base_url,
         }
 
     @staticmethod
@@ -148,10 +141,14 @@ class tmdbstoryliner(_PluginBase):
             self._siliconflow_api_key = config.get("siliconflow_api_key") or ""
             self._siliconflow_model = config.get("siliconflow_model") or "Qwen/Qwen2.5-7B-Instruct"
             self._ai_base_url = (config.get("ai_base_url") or "").strip()
-            self._ai_channels_text = config.get("ai_channels") or ""
-            self._ai_channels = self._parse_ai_channels()
+            # 旧多渠道配置（ai_channels）已移除：单渠道字段为空时迁移第一个渠道
+            legacy = self._parse_legacy_channels(config.get("ai_channels") or "")
+            if legacy and not self._siliconflow_api_key:
+                self._ai_base_url = legacy[0]["base_url"]
+                self._siliconflow_api_key = legacy[0]["api_key"]
+                self._siliconflow_model = legacy[0]["model"]
+                logger.info("已从旧多渠道配置迁移第一个AI渠道")
             self._translate_proxy = (config.get("translate_proxy") or "").strip()
-            self._google_direct_failed = set()
 
         # 加载缓存和历史记录
         self._load_cache_and_history()
@@ -350,7 +347,7 @@ class tmdbstoryliner(_PluginBase):
                                 'props': {'cols': 12, 'md': 6},
                                 'content': [{
                                     'component': 'VTextField',
-                                    'props': {'model': 'translate_proxy', 'label': '谷歌翻译代理（先直连，连接失败自动改走代理；留空仅直连）',
+                                    'props': {'model': 'translate_proxy', 'label': '谷歌翻译代理（谷歌翻译请求走此代理，留空直连）',
                                               'placeholder': '如: http://192.168.1.10:7897'},
                                 }]
                             },
@@ -467,31 +464,10 @@ class tmdbstoryliner(_PluginBase):
                         'content': [
                             {
                                 'component': 'VCol',
-                                'props': {'cols': 12},
-                                'content': [{
-                                    'component': 'VTextarea',
-                                    'props': {
-                                        'model': 'ai_channels',
-                                        'label': 'AI翻译渠道（每行一个：base_url|api_key|model，model可省略）',
-                                        'placeholder': 'https://api.groq.com/openai/v1|gsk_xxx|llama-3.3-70b-versatile\n'
-                                                       'https://api.cerebras.ai/v1|csk-xxx\n'
-                                                       'https://generativelanguage.googleapis.com/v1beta/openai|AIza-xxx|gemini-2.0-flash\n'
-                                                       '按填写顺序依次尝试，第一个成功即返回，全部失败自动降级谷歌翻译；留空则使用下方单渠道配置',
-                                        'rows': 4,
-                                    },
-                                }]
-                            },
-                        ]
-                    },
-                    {
-                        'component': 'VRow',
-                        'content': [
-                            {
-                                'component': 'VCol',
                                 'props': {'cols': 12, 'md': 6},
                                 'content': [{
                                     'component': 'VTextField',
-                                    'props': {'model': 'siliconflow_model', 'label': 'AI模型（单渠道）',
+                                    'props': {'model': 'siliconflow_model', 'label': 'AI模型',
                                               'placeholder': '如: Qwen/Qwen2.5-7B-Instruct'},
                                 }]
                             },
@@ -500,7 +476,7 @@ class tmdbstoryliner(_PluginBase):
                                 'props': {'cols': 12, 'md': 6},
                                 'content': [{
                                     'component': 'VTextField',
-                                    'props': {'model': 'ai_base_url', 'label': 'AI API地址（单渠道，留空默认SiliconFlow）',
+                                    'props': {'model': 'ai_base_url', 'label': 'AI API地址（留空默认SiliconFlow）',
                                               'placeholder': '如: https://openrouter.ai/api/v1'},
                                 }]
                             },
@@ -1456,35 +1432,26 @@ class tmdbstoryliner(_PluginBase):
     # ------------------------------------------------------------------
     # 翻译
     # ------------------------------------------------------------------
-    def _parse_ai_channels(self) -> List[dict]:
-        """解析多行AI渠道配置（每行 base_url|api_key|model）。
-
-        多行配置为空时回退旧单渠道字段，实现零迁移。
-        """
+    @staticmethod
+    def _parse_legacy_channels(text: str) -> List[dict]:
+        """解析旧多渠道配置文本（每行 base_url|api_key|model），仅供迁移取第一个渠道。"""
         channels: List[dict] = []
-        for line in (self._ai_channels_text or "").splitlines():
+        for line in (text or "").splitlines():
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
             parts = [p.strip() for p in line.split("|")]
             if len(parts) < 2 or not parts[0] or not parts[1]:
-                logger.warning(f"AI渠道行格式无效（base_url|api_key|model），跳过：{line[:50]}")
                 continue
             channels.append({
                 "base_url": parts[0].rstrip("/"),
                 "api_key": parts[1],
                 "model": parts[2] if len(parts) > 2 and parts[2] else "Qwen/Qwen2.5-7B-Instruct",
             })
-        if not channels and self._siliconflow_api_key:
-            channels.append({
-                "base_url": (self._ai_base_url or "https://api.siliconflow.cn/v1").rstrip("/"),
-                "api_key": self._siliconflow_api_key,
-                "model": self._siliconflow_model or "Qwen/Qwen2.5-7B-Instruct",
-            })
         return channels
 
     def translate_text(self, text: str, source_lang: str = "en", target_lang: str = "zh") -> str:
-        """翻译链：AI优先，失败降级谷歌；谷歌失败再降级谷歌备用端点。"""
+        """翻译链：AI优先，失败降级谷歌翻译。"""
         if not text or source_lang == target_lang:
             return text
         try:
@@ -1503,73 +1470,17 @@ class tmdbstoryliner(_PluginBase):
             return text
 
     def _free_translate(self, text: str, source_lang: str, target_lang: str) -> str:
-        """免费兜底链：Google gtx → 谷歌备用端点，校验通过即返回。"""
+        """免费翻译：谷歌 clients5 端点，校验通过即返回，否则原文。"""
         result = self._google_translate(text, source_lang, target_lang)
-        if result != text and self._is_plausible_translation(text, result):
-            return result
-        logger.warning("谷歌翻译失败，降级到谷歌备用端点")
-        result = self._google_backup_translate(text, source_lang, target_lang)
         if result != text and self._is_plausible_translation(text, result):
             return result
         return text
 
     def _google_translate(self, text: str, source_lang: str, target_lang: str) -> str:
-        """Google翻译（免账号）"""
-        try:
-            url = "https://translate.googleapis.com/translate_a/single"
-            params = {
-                "client": "gtx",
-                "sl": source_lang,
-                "tl": target_lang,
-                "dt": "t",
-                "q": text
-            }
-            result = self._google_get_json(url, params)
+        """谷歌免费翻译（clients5 / dict-chrome-ex 端点，免账号）。
 
-            if result and len(result) > 0 and result[0]:
-                translated_text = ""
-                for item in result[0]:
-                    if item and len(item) > 0 and item[0]:
-                        translated_text += item[0]
-                if translated_text.strip():
-                    return translated_text
-                logger.warning("Google翻译返回空结果")
-                return text
-
-            logger.error(f"Google翻译返回错误：{result}")
-            return text
-        except Exception as e:
-            logger.error(f"Google翻译失败：{e}")
-            return text
-
-    def _google_get_json(self, url: str, params: dict):
-        """请求谷歌翻译端点：先直连；连接失败且配置了代理则改走代理，并记住该端点直连不可用。
-
-        HTTP 错误（如429 限流）说明连通正常，不切换代理。
-        """
-        if url not in self._google_direct_failed or not self._translate_proxy:
-            try:
-                response = requests.get(url, params=params, timeout=10)
-                response.raise_for_status()
-                return response.json()
-            except requests.exceptions.HTTPError:
-                raise
-            except requests.exceptions.RequestException as e:
-                if not self._translate_proxy:
-                    raise
-                logger.warning(f"谷歌端点（{url.split('/')[2]}）直连失败，改走代理：{e}")
-                self._google_direct_failed.add(url)
-        response = requests.get(
-            url, params=params, timeout=10,
-            proxies=({"http": self._translate_proxy, "https": self._translate_proxy}
-                     if self._translate_proxy else None))
-        response.raise_for_status()
-        return response.json()
-
-    def _google_backup_translate(self, text: str, source_lang: str, target_lang: str) -> str:
-        """谷歌免费备用端点（clients5 / dict-chrome-ex）：gtx 限流或连不上时兜底。
-
-        实测 gtx 返回 429 时该端点仍可用，与 gtx 共用谷歌翻译后端。
+        gtx 主端点实测对代理出口持续 429，已移除；
+        配置了翻译代理则请求始终走代理，不再先试直连。
         """
         try:
             url = "https://clients5.google.com/translate_a/t"
@@ -1579,35 +1490,42 @@ class tmdbstoryliner(_PluginBase):
                 "tl": target_lang,
                 "q": text
             }
-            result = self._google_get_json(url, params)
+            response = requests.get(
+                url, params=params, timeout=10,
+                proxies=({"http": self._translate_proxy, "https": self._translate_proxy}
+                         if self._translate_proxy else None))
+            response.raise_for_status()
+            result = response.json()
 
             translated_text = ("".join(x for x in result if isinstance(x, str))
                                if isinstance(result, list) else "")
             if translated_text.strip():
                 return translated_text
 
-            logger.warning("谷歌备用端点返回空结果")
+            logger.warning("谷歌翻译返回空结果")
             return text
         except Exception as e:
-            logger.error(f"谷歌备用端点翻译失败：{e}")
+            logger.error(f"谷歌翻译失败：{e}")
             return text
 
     def ai_translate_text(self, text: str, source_lang: str = "en", target_lang: str = "zh") -> str:
-        """AI翻译：按配置顺序依次尝试渠道，第一个成功即返回；全部失败返回原文。"""
+        """AI翻译：调用配置的单渠道，失败返回原文。"""
         if not text:
             return text
-        channels = self._ai_channels
-        if not channels:
-            logger.warning("AI翻译未配置任何渠道")
+        if not self._siliconflow_api_key:
+            logger.warning("AI翻译未配置API密钥")
             return text
-        for idx, channel in enumerate(channels):
-            translated, rate_limited = self._call_ai_channel(
-                channel, text, source_lang, target_lang)
-            if translated is not None:
-                return translated
-            if rate_limited:
-                logger.warning(f"AI渠道{idx + 1}（{channel['base_url']}）限流，尝试下一渠道")
-        logger.error("所有AI渠道均失败，返回原文")
+        channel = {
+            "base_url": (self._ai_base_url or "https://api.siliconflow.cn/v1").rstrip("/"),
+            "api_key": self._siliconflow_api_key,
+            "model": self._siliconflow_model or "Qwen/Qwen2.5-7B-Instruct",
+        }
+        translated, rate_limited = self._call_ai_channel(channel, text, source_lang, target_lang)
+        if translated is not None:
+            return translated
+        if rate_limited:
+            logger.warning("AI翻译渠道限流")
+        logger.error("AI翻译失败，返回原文")
         return text
 
     def _call_ai_channel(self, channel: dict, text: str,
@@ -1681,40 +1599,28 @@ class tmdbstoryliner(_PluginBase):
         return True
 
     def _run_ai_test(self):
-        """测试所有翻译渠道连通性，结果汇总推送"""
+        """测试翻译渠道连通性，结果汇总推送"""
         logger.info("开始测试翻译渠道")
         sample = "The curious cat jumped over the lazy dog."
         lines = []
 
-        # 免费引擎
-        for engine_name, engine in (("谷歌(gtx)", self._google_translate),
-                                    ("谷歌备用端点", self._google_backup_translate)):
-            try:
-                result = engine(sample, "en", "zh")
-                ok = self._is_plausible_translation(sample, result)
-                lines.append(f"{'✅' if ok else '❌'} {engine_name}: {result[:60]}")
-            except Exception as e:
-                lines.append(f"❌ {engine_name}: {e}")
+        # 谷歌
+        try:
+            result = self._google_translate(sample, "en", "zh")
+            ok = self._is_plausible_translation(sample, result)
+            lines.append(f"{'✅' if ok else '❌'} 谷歌翻译: {result[:60]}")
+        except Exception as e:
+            lines.append(f"❌ 谷歌翻译: {e}")
 
-        # AI 渠道池
-        if not self._ai_channels:
-            lines.append("⚠️ 未配置AI渠道")
-        for idx, channel in enumerate(self._ai_channels):
-            label = f"AI渠道{idx + 1}（{channel['base_url']} / {channel['model']}）"
-            try:
-                translated, rate_limited = self._call_ai_channel(
-                    channel, sample, "en", "zh")
-                if translated:
-                    lines.append(f"✅ {label}: {translated[:60]}")
-                elif rate_limited:
-                    lines.append(f"⚠️ {label}: 限流")
-                else:
-                    lines.append(f"❌ {label}: 失败")
-            except Exception as e:
-                lines.append(f"❌ {label}: {e}")
+        # AI
+        if not self._siliconflow_api_key:
+            lines.append("⚠️ 未配置AI翻译")
+        else:
+            result = self.ai_translate_text(sample, "en", "zh")
+            ok = self._is_plausible_translation(sample, result)
+            lines.append(f"{'✅' if ok else '❌'} AI翻译: {result[:60]}")
 
-        proxy_note = (f"谷歌代理: {self._translate_proxy}（直连失败时启用）"
-                      if self._translate_proxy else "未设谷歌代理（仅直连）")
+        proxy_note = f"谷歌代理: {self._translate_proxy}" if self._translate_proxy else "未设谷歌代理（直连）"
         text = f"翻译渠道测试结果（{proxy_note}）：\n" + "\n".join(lines)
         logger.info(text)
         try:
